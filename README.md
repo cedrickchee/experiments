@@ -1,4 +1,4 @@
-# Experiments Reposity
+# Experiments Repository
 
 ## Introduction
 
