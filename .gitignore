@@ -65,3 +65,6 @@ typings/
 
 # Serverless directories
 .serverless
+
+# IDE or code editor artefacts
+.vscode/
