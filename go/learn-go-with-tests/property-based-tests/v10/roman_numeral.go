@@ -22,6 +22,17 @@ func (r romanNumerals) ValueOf(symbols ...byte) int {
 	return 0
 }
 
+func (r romanNumerals) Exists(symbols ...byte) bool {
+	symbol := string(symbols)
+
+	for _, s := range r {
+		if s.Symbol == symbol {
+			return true
+		}
+	}
+	return false
+}
+
 var allRomanNumerals = romanNumerals{
 	{1000, "M"},
 	{900, "CM"},
@@ -36,6 +47,25 @@ var allRomanNumerals = romanNumerals{
 	{5, "V"},
 	{4, "IV"},
 	{1, "I"},
+}
+
+// Extracting the numerals, offering a Symbols method to retrieve them as a slice
+type windowedRoman string
+
+func (w windowedRoman) Symbols() (symbols [][]byte) {
+	// Example of w value "IV"
+	for i := 0; i < len(w); i++ {
+		symbol := w[i] // When you index strings in Go, you get a byte
+		notAtEnd := i+1 < len(w)
+
+		if notAtEnd && isSubtractive(symbol) && allRomanNumerals.Exists(symbol, w[i+1]) {
+			symbols = append(symbols, []byte{byte(symbol), byte(w[i+1])})
+			i++
+		} else {
+			symbols = append(symbols, []byte{byte(symbol)})
+		}
+	}
+	return
 }
 
 // ConvertToRoman converts an Arabic number (numbers 0 to 9) to a Roman Numeral
@@ -53,35 +83,18 @@ func ConvertToRoman(arabic int) string {
 }
 
 // ConvertToArabic converts a Roman Numeral to an Arabic number
-func ConvertToArabic(roman string) int {
-	total := 0
-
-	for i := 0; i < len(roman); i++ {
-		symbol := roman[i] // When you index strings in Go, you get a byte
-
-		// look ahead to next symbol if we can and, the current symbol is base 10 (only valid subtractors)
-		if couldBeSubtractive(i, symbol, roman) {
-			nextSymbol := roman[i+1]
-
-			// get the value of the two character string
-			value := allRomanNumerals.ValueOf(symbol, nextSymbol)
-
-			if value != 0 {
-				total += value
-				i++ // move past this character too for the next loop
-			} else {
-				total += allRomanNumerals.ValueOf(symbol)
-			}
-		} else {
-			total += allRomanNumerals.ValueOf(symbol)
-		}
+func ConvertToArabic(roman string) (total int) {
+	// Iterate over the symbols and total them
+	for _, symbols := range windowedRoman(roman).Symbols() {
+		total += allRomanNumerals.ValueOf(symbols...)
 	}
-	return total
+	return
 }
 
-func couldBeSubtractive(index int, currentSymbol uint8, roman string) bool {
+// Figure out if the symbol we are currently dealing with is a two character subtractive symbol
+func isSubtractive(symbol uint8) bool {
+	// symbol:
 	// byte is an alias for uint8 and is equivalent to uint8 in all ways.
 	// It is used, by convention, to distinguish byte values from 8-bit unsigned integer values.
-	isSubtractiveSymbol := currentSymbol == 'I' || currentSymbol == 'X' || currentSymbol == 'C'
-	return index+1 < len(roman) && isSubtractiveSymbol
+	return symbol == 'I' || symbol == 'X' || symbol == 'C'
 }
