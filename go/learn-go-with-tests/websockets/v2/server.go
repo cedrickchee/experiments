@@ -3,7 +3,6 @@ package poker
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"strconv"
 	"text/template"
@@ -87,13 +86,13 @@ var wsUpgrader = websocket.Upgrader{
 }
 
 func (p *PlayerServer) webSocketHandler(w http.ResponseWriter, r *http.Request) {
-	conn, _ := wsUpgrader.Upgrade(w, r, nil)
+	ws := newPlayerServerWS(w, r)
 
-	_, numberOfPlayersMsg, _ := conn.ReadMessage()
+	numberOfPlayersMsg := ws.WaitForMsg()
 	numberOfPlayers, _ := strconv.Atoi(string(numberOfPlayersMsg))
-	p.game.Start(numberOfPlayers, ioutil.Discard) //todo: Don't discard the blinds messages!
+	p.game.Start(numberOfPlayers, ws)
 
-	_, winner, _ := conn.ReadMessage()
+	winner := ws.WaitForMsg()
 	p.game.Finish(string(winner))
 }
 
