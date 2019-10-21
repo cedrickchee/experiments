@@ -1,9 +1,11 @@
-package poker
+package poker_test
 
 import (
 	"io/ioutil"
 	"os"
 	"testing"
+
+	poker "github.com/cedrickchee/learn-go-with-tests/websockets/v2"
 )
 
 func TestFileSystemStore(t *testing.T) {
@@ -13,15 +15,15 @@ func TestFileSystemStore(t *testing.T) {
 			{"Name": "David", "Wins": 36}]`)
 		defer cleanDatabase()
 
-		store, err := NewFileSystemPlayerStore(database)
+		store, err := poker.NewFileSystemPlayerStore(database)
 
 		assertNoError(t, err)
 
 		got := store.GetLeague()
 
-		want := []Player{
-			{"David", 36},
-			{"John", 19},
+		want := []poker.Player{
+			{Name: "David", Wins: 36},
+			{Name: "John", Wins: 19},
 		}
 
 		assertLeague(t, got, want)
@@ -37,7 +39,7 @@ func TestFileSystemStore(t *testing.T) {
 			{"Name": "David", "Wins": 36}]`)
 		defer cleanDatabase()
 
-		store, err := NewFileSystemPlayerStore(database)
+		store, err := poker.NewFileSystemPlayerStore(database)
 
 		assertNoError(t, err)
 
@@ -52,7 +54,7 @@ func TestFileSystemStore(t *testing.T) {
 			{"Name": "David", "Wins": 36}]`)
 		defer cleanDatabase()
 
-		store, err := NewFileSystemPlayerStore(database)
+		store, err := poker.NewFileSystemPlayerStore(database)
 
 		assertNoError(t, err)
 
@@ -70,7 +72,7 @@ func TestFileSystemStore(t *testing.T) {
 			{"Name": "David", "Wins": 36}]`)
 		defer cleanDatabase()
 
-		store, err := NewFileSystemPlayerStore(database)
+		store, err := poker.NewFileSystemPlayerStore(database)
 
 		assertNoError(t, err)
 
@@ -86,7 +88,7 @@ func TestFileSystemStore(t *testing.T) {
 		database, cleanDatabase := createTempFile(t, "")
 		defer cleanDatabase()
 
-		_, err := NewFileSystemPlayerStore(database)
+		_, err := poker.NewFileSystemPlayerStore(database)
 
 		assertNoError(t, err)
 	})
