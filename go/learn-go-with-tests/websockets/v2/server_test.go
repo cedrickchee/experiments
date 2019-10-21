@@ -18,6 +18,7 @@ import (
 
 var (
 	dummyGame = &GameSpy{}
+	tenMS     = 10 * time.Millisecond
 )
 
 func TestGETPlayers(t *testing.T) {
@@ -114,11 +115,12 @@ func TestGame(t *testing.T) {
 		assertStatus(t, response, http.StatusOK)
 	})
 
-	t.Run("start a game with 3 players and declare Bahn the winner", func(t *testing.T) {
+	t.Run("start a game with 3 players, send some blind alerts down WS and and declare Bahn the winner", func(t *testing.T) {
 		numberOfPlayers := 3
-
-		game := &GameSpy{}
+		wantedBlindAlert := "Blind is 100"
 		winner := "Bahn"
+
+		game := &GameSpy{BlindAlert: []byte(wantedBlindAlert)}
 
 		server := httptest.NewServer(mustMakePlayerServer(t, dummyPlayerStore, game))
 		wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
@@ -133,10 +135,11 @@ func TestGame(t *testing.T) {
 		// Workaround test still failing.
 		// There is a delay between our WebSocket connection reading the message
 		// and recording the win and our test finishes before it happens.
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(tenMS)
 
 		assertGameStartedWith(t, game, numberOfPlayers)
 		assertFinishCalledWith(t, game, winner)
+		within(t, tenMS, func() { assertWebsocketGotMsg(t, ws, wantedBlindAlert) })
 	})
 }
 
@@ -192,6 +195,14 @@ func assertLeague(t *testing.T, got, want []poker.Player) {
 	}
 }
 
+func assertWebsocketGotMsg(t *testing.T, ws *websocket.Conn, want string) {
+	_, msg, _ := ws.ReadMessage()
+
+	if string(msg) != want {
+		t.Errorf(`got "%s", want "%s"`, string(msg), want)
+	}
+}
+
 func getLeagueFromResponse(t *testing.T, body io.Reader) (league []poker.Player) {
 	t.Helper()
 
@@ -227,5 +238,22 @@ func mustDialWs(t *testing.T, url string) *websocket.Conn {
 func writeWSMessage(t *testing.T, ws *websocket.Conn, message string) {
 	if err := ws.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
 		t.Fatalf("could not send message over ws connection %v", err)
+	}
+}
+
+func within(t *testing.T, d time.Duration, assert func()) {
+	t.Helper()
+
+	done := make(chan struct{}, 1)
+
+	go func() {
+		assert()
+		done <- struct{}{}
+	}()
+
+	select {
+	case <-time.After(d):
+		t.Error("timed out")
+	case <-done:
 	}
 }
