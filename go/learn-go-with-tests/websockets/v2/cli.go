@@ -9,12 +9,6 @@ import (
 	"strings"
 )
 
-// Game manages the state of a game
-type Game interface {
-	Start(numberOfPlayers int)
-	Finish(winner string)
-}
-
 // CLI helps players through a game of poker
 type CLI struct {
 	in   *bufio.Scanner
@@ -51,7 +45,7 @@ func (cli *CLI) PlayPoker() {
 		return
 	}
 
-	cli.game.Start(numberOfPlayers)
+	cli.game.Start(numberOfPlayers, cli.out)
 
 	winnerInput := cli.readLine()
 	winner, err := extractWinner(winnerInput)
