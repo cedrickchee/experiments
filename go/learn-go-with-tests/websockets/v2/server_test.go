@@ -132,11 +132,6 @@ func TestGame(t *testing.T) {
 		writeWSMessage(t, ws, strconv.Itoa(numberOfPlayers))
 		writeWSMessage(t, ws, winner)
 
-		// Workaround test still failing.
-		// There is a delay between our WebSocket connection reading the message
-		// and recording the win and our test finishes before it happens.
-		time.Sleep(tenMS)
-
 		assertGameStartedWith(t, game, numberOfPlayers)
 		assertFinishCalledWith(t, game, winner)
 		within(t, tenMS, func() { assertWebsocketGotMsg(t, ws, wantedBlindAlert) })
@@ -256,4 +251,16 @@ func within(t *testing.T, d time.Duration, assert func()) {
 		t.Error("timed out")
 	case <-done:
 	}
+}
+
+func retryUntil(d time.Duration, f func() bool) bool {
+	deadline := time.Now().Add(d)
+
+	for time.Now().Before(deadline) {
+		if f() {
+			return true
+		}
+	}
+
+	return false
 }

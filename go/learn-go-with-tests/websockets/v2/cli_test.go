@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	poker "github.com/cedrickchee/learn-go-with-tests/websockets/v2"
 )
@@ -119,7 +120,11 @@ func assertMessagesSentToUser(t *testing.T, stdout *bytes.Buffer, messages ...st
 func assertFinishCalledWith(t *testing.T, game *GameSpy, winner string) {
 	t.Helper()
 
-	if game.FinishCalledWith != winner {
+	passed := retryUntil(500*time.Millisecond, func() bool {
+		return game.FinishCalledWith == winner
+	})
+
+	if !passed {
 		t.Errorf("expected finish called with %q but got %q", winner, game.FinishCalledWith)
 	}
 }
@@ -135,7 +140,11 @@ func assertGameNotStarted(t *testing.T, game *GameSpy) {
 func assertGameStartedWith(t *testing.T, game *GameSpy, numberOfPlayersWanted int) {
 	t.Helper()
 
-	if game.StartCalledWith != numberOfPlayersWanted {
+	passed := retryUntil(500*time.Millisecond, func() bool {
+		return game.StartCalledWith == numberOfPlayersWanted
+	})
+
+	if !passed {
 		t.Errorf("wanted Start called with %d but got %d", numberOfPlayersWanted, game.StartCalledWith)
 	}
 }
