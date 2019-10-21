@@ -3,7 +3,6 @@ package poker
 import (
 	"fmt"
 	"io"
-	"os"
 	"time"
 )
 
@@ -20,9 +19,9 @@ func (a BlindAlerterFunc) ScheduleAlertAt(duration time.Duration, amount int, to
 	a(duration, amount, to)
 }
 
-// Alerter will schedule alerts and print them to os.Stdout
+// Alerter will schedule alerts and print them to "to"
 func Alerter(duration time.Duration, amount int, to io.Writer) {
 	time.AfterFunc(duration, func() {
-		fmt.Fprintf(os.Stdout, "Blind is now %d\n", amount)
+		fmt.Fprintf(to, "Blind is now %d\n", amount)
 	})
 }
