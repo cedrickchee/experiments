@@ -2,24 +2,22 @@ package kata
 
 import (
 	"fmt"
-	"regexp"
 )
 
 func PrinterError(s string) string {
-	// a to m
-	// example: "aaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbmmmmmmmmmmmmmmmmmmmxyz"
-	ln := len(s)
-	var badStrCnt int
+	// re := regexp.MustCompile(`[n-z]`)
 
-	// matched, err := regexp.MatchString(`xyz.*`, s)
-	// fmt.Println(matched, err)
+	// return fmt.Sprintf("%d/%d", len(re.FindAllString(s, -1)), len(s))
 
-	// re := regexp.MustCompile(`foo.?`)
-	// fmt.Printf("%q\n", re.FindAll([]byte(`seafood fool`), -1))
-	re := regexp.MustCompile(`[n-z]`)
-	fmt.Printf("%s, badStr: %s\n", s, re.FindAllString(s, -1))
-	badStrCnt = len(re.FindAllString(s, -1))
+	// Other solution
+	errors := 0
+	for _, c := range s {
+		if c >= 'a' && c <= 'm' {
+			continue
+		} else {
+			errors++
+		}
+	}
 
-	res := fmt.Sprintf("%d/%d", badStrCnt, ln)
-	return res
+	return fmt.Sprintf("%d/%d", errors, len(s))
 }
