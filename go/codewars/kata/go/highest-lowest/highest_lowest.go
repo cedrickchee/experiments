@@ -1,4 +1,4 @@
-package main
+package kata
 
 import (
 	"fmt"
@@ -6,8 +6,7 @@ import (
 	"strings"
 )
 
-// HighAndLow is my solution for
-// Codewars kata: https://www.codewars.com/kata/highest-and-lowest/go
+// HighAndLow is my solution for Codewars kata: https://www.codewars.com/kata/highest-and-lowest/go
 func HighAndLow(in string) string {
 	strFlds := strings.Fields(in)
 	var highest, lowest int
@@ -25,8 +24,4 @@ func HighAndLow(in string) string {
 		}
 	}
 	return fmt.Sprintf("%d %d", highest, lowest)
-}
-
-func main() {
-	fmt.Println(HighAndLow("8 3 -5 42 -1 0 0 -9 4 7 4 -4")) // expect output to equal "42 -9"
 }
