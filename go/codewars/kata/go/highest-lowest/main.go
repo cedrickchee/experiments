@@ -1,27 +1,32 @@
-package kata
+package main
 
 import (
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 )
 
+// HighAndLow is my solution for
+// Codewars kata: https://www.codewars.com/kata/highest-and-lowest/go
 func HighAndLow(in string) string {
-	// Code here or
-	strs := strings.Split(in, " ")
-	arr := make([]int, len(strs))
-	for i := range arr {
-		arr[i], _ = strconv.Atoi(strs[i])
+	strFlds := strings.Fields(in)
+	var highest, lowest int
+	for i, str := range strFlds {
+		val, _ := strconv.Atoi(string(str))
+		if i == 0 {
+			highest = val
+			lowest = val
+		}
+		if val > highest {
+			highest = val
+		}
+		if val < lowest {
+			lowest = val
+		}
 	}
-	min, max := MinMax(arr)
-	str := fmt.Sprintf("%d %d", max, min)
-
-	return str
+	return fmt.Sprintf("%d %d", highest, lowest)
 }
 
-// MinMax an array of numbers
-func MinMax(v []int) (int, int) {
-	sort.Ints(v)
-	return v[0], v[len(v)-1]
+func main() {
+	fmt.Println(HighAndLow("8 3 -5 42 -1 0 0 -9 4 7 4 -4")) // expect output to equal "42 -9"
 }
