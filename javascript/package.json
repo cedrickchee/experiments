@@ -1,0 +1,16 @@
+{
+  "name": "js-snippets",
+  "version": "0.0.1",
+  "description": "A collection of little JavaScript snippets of programs I write when I test out ideas",
+  "main": "index.js",
+  "repository": "https://github.com/cedrickchee/experiments/tree/master/javascript",
+  "author": "Cedric Chee",
+  "license": "MIT",
+  "private": false,
+  "devDependencies": {
+    "jest": "^24.9.0"
+  },
+  "scripts": {
+    "test": "jest"
+  }
+}
