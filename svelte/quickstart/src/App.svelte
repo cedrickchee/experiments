@@ -6,6 +6,7 @@
 	let greet = 'Happy New Year!';
 	let year = 2020;
 	let src = 'tutorial/image.gif';
+	let string = 'this string contains some <strong>HTML!!!</strong>';
 </script>
 
 <main>
@@ -15,6 +16,8 @@
 	<span>A foobar span</span>
 
 	<Nested/>
+
+	<p>{@html string}</p>
 </main>
 
 <style>
