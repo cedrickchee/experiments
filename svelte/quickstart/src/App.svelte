@@ -1,4 +1,6 @@
 <script>
+	import Nested from './Nested.svelte';
+
 	export let name;
 
 	let greet = 'Happy New Year!';
@@ -11,6 +13,8 @@
 	<p>{greet.toUpperCase()} Have a great {year}.</p>
 	<img {src} alt="{name} dances"/>
 	<span>A foobar span</span>
+
+	<Nested/>
 </main>
 
 <style>
