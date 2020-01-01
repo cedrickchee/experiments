@@ -1,1 +1,5 @@
-<span>This is another span.</span>
+<script>
+  export let answer;
+</script>
+
+<p>The answer is {answer}</p>
