@@ -10,6 +10,7 @@
 	<h1>Hello {name}!</h1>
 	<p>{greet.toUpperCase()} Have a great {year}.</p>
 	<img {src} alt="{name} dances"/>
+	<span>A foobar span</span>
 </main>
 
 <style>
@@ -25,6 +26,12 @@
 		text-transform: uppercase;
 		font-size: 4em;
 		font-weight: 100;
+	}
+
+	span {
+		color: purple;
+		font-family: 'Comic Sans MS', cursive;
+		font-size: 2em;
 	}
 
 	@media (min-width: 640px) {
