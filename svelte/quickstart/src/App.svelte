@@ -3,11 +3,13 @@
 
 	let greet = 'Happy New Year!';
 	let year = 2020;
+	let src = 'tutorial/image.gif';
 </script>
 
 <main>
 	<h1>Hello {name}!</h1>
 	<p>{greet.toUpperCase()} Have a great {year}.</p>
+	<img {src} alt="{name} dances"/>
 </main>
 
 <style>
