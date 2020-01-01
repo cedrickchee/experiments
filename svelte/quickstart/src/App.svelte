@@ -1,11 +1,13 @@
 <script>
 	export let name;
+
+	let greet = 'Happy New Year!';
+	let year = 2020;
 </script>
 
 <main>
 	<h1>Hello {name}!</h1>
-	<p>Yo, sup?</p>
-	<p>Visit the <a href="https://svelte.dev/tutorial">Svelte tutorial</a> to learn how to build Svelte apps.</p>
+	<p>{greet.toUpperCase()} Have a great {year}.</p>
 </main>
 
 <style>
