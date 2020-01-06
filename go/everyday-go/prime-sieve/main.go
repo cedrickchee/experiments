@@ -29,13 +29,6 @@ func filter(in <-chan int, out chan<- int, prime int) {
 // Prime Sieve function that put it all together as a chain of filter steps.
 // Input argument, 'searchSize' is how far (upper bound) we look for primes.
 func Sieve(searchSize int) (primes []int) {
-	// Create an empty slice (dynamic array) with non-zero length to hold primes.
-	// Slice length is how many (density) primes are there less than some
-	// integer N. We can estimate that using the "prime number theorem".
-	// numOfPrimes := float64(searchSize) / math.Log(float64(searchSize))
-	// print("numOfPrimes ", int(numOfPrimes), "\n")
-	// var primes []int
-
 	in := make(chan int)
 	go generate(in) // start 'generate' goroutine.
 
