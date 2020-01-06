@@ -1,3 +1,17 @@
+// Benchmark run
+//
+// $ go test -bench=.
+//
+// goos: linux
+// goarch: amd64
+// pkg: github.com/cedrickchee/experiments/go/everyday-go/prime-sieve
+// BenchmarkSieve10-4     	   13772	     82555 ns/op
+// BenchmarkSieve100-4    	     649	   1872222 ns/op
+// BenchmarkSieve1000-4   	      12	 138705203 ns/op
+// BenchmarkSieve5000-4   	       1	10146371301 ns/op
+// PASS
+// ok  	github.com/cedrickchee/experiments/go/everyday-go/prime-sieve	17.928s
+
 package main
 
 import "testing"
