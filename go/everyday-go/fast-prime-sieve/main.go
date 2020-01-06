@@ -6,8 +6,8 @@
 package main
 
 import (
+	"fmt"
 	"math"
-    "fmt"
 )
 
 func Sieve(N int) (primes []int) {
