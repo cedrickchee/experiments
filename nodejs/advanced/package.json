@@ -9,6 +9,8 @@
   "author": "Cedric Chee",
   "license": "MIT",
   "dependencies": {
-    "express": "^4.17.1"
+    "express": "^4.17.1",
+    "minimist": "^1.2.0",
+    "progress": "^2.0.3"
   }
 }
