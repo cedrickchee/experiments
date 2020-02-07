@@ -68,3 +68,7 @@ typings/
 
 # IDE or code editor artefacts
 .vscode/
+
+# TLS cert and key
+*.crt
+*.key
