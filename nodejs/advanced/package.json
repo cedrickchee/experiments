@@ -1,0 +1,14 @@
+{
+  "name": "advanced_nodejs",
+  "version": "0.0.1",
+  "description": "Advanced Node.js examples",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Cedric Chee",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.17.1"
+  }
+}
