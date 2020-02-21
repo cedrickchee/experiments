@@ -40,6 +40,7 @@ func main() {
 	// Serve any file from static directory for path /assets/*
 	// i.e.: GET http://localhost:3000/static/balloon1.jpg
 	e.Static("/static", "assets")
+	e.GET("/download", sendFile)
 
 	// Start server
 	e.Logger.Fatal(e.Start(":3000"))
@@ -136,4 +137,8 @@ func userAuth(username, password string, c echo.Context) (bool, error) {
 
 func listUser(c echo.Context) error {
 	return c.String(http.StatusOK, "/users")
+}
+
+func sendFile(c echo.Context) error {
+	return c.File("assets/balloon1.jpg")
 }
