@@ -23,6 +23,7 @@ func main() {
 	e.GET("/show", show)
 	e.POST("/save", save)
 	e.POST("/users/save", saveUser)
+	e.POST("/books", saveBook)
 
 	// Start server
 	e.Logger.Fatal(e.Start(":3000"))
@@ -85,4 +86,27 @@ func saveUser(c echo.Context) error {
 	}
 
 	return c.HTML(http.StatusOK, "<strong>Thank you!"+name+"</strong>")
+}
+
+type Book struct {
+	Title  string `json:"title" xml:"title" form:"title" query:"title"`
+	Author string `json:"author" xml:"author" form:"author" query:"author"`
+}
+
+func saveBook(c echo.Context) error {
+	// Handling Request
+	// Bind json, xml, form or query payload into Go struct based on
+	// `Content-Type` request header.
+	//
+	// Test in terminal:
+	// POST JSON data: `curl -H "Content-Type: application/json" -d '{"author":"Martin Fowler", "title":"Refactoring"}' -X POST http://localhost:3000/books`
+	// POST url encoded data: `curl -H "Content-Type: application/x-www-form-urlencoded" -d "author=Martin Fowler&year=2008&title=Refactoring" -X POST http://localhost:3000/books`
+	u := new(Book)
+	if err := c.Bind(u); err != nil {
+		return err
+	}
+	// Render response as json with status code.
+	return c.JSON(http.StatusCreated, u)
+	// or
+	// c.XML(http.StatusCreated, u)
 }
