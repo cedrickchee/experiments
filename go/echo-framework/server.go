@@ -24,6 +24,9 @@ func main() {
 	e.POST("/save", save)
 	e.POST("/users/save", saveUser)
 	e.POST("/books", saveBook)
+	// Serve any file from static directory for path /assets/*
+	// i.e.: GET http://localhost:3000/static/balloon1.jpg
+	e.Static("/static", "assets")
 
 	// Start server
 	e.Logger.Fatal(e.Start(":3000"))
