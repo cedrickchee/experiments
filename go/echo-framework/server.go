@@ -19,6 +19,7 @@ func main() {
 	e.GET("/", hello)
 	e.GET("/users/:id", getUser)
 	e.GET("/show", show)
+	e.POST("/save", save)
 
 	// Start server
 	e.Logger.Fatal(e.Start(":3000"))
@@ -39,4 +40,11 @@ func show(c echo.Context) error {
 	team := c.QueryParam("team")
 	member := c.QueryParam("member")
 	return c.String(http.StatusOK, "team:"+team+", member:"+member)
+}
+
+func save(c echo.Context) error {
+	// Get name and email
+	name := c.FormValue("name")
+	email := c.FormValue("email")
+	return c.String(http.StatusOK, "name:"+name+", email:"+email)
 }
