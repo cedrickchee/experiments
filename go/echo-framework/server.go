@@ -41,6 +41,7 @@ func main() {
 	// i.e.: GET http://localhost:3000/static/balloon1.jpg
 	e.Static("/static", "assets")
 	e.GET("/download", sendFile)
+	e.GET("/stream", sendStream)
 
 	// Start server
 	e.Logger.Fatal(e.Start(":3000"))
@@ -140,5 +141,17 @@ func listUser(c echo.Context) error {
 }
 
 func sendFile(c echo.Context) error {
+	// Send the content of file as response. It automatically sets the correct
+	// content type and handles caching gracefully.
 	return c.File("assets/balloon1.jpg")
+}
+
+func sendStream(c echo.Context) error {
+	// Send an arbitrary data stream response with provided content type and
+	// io.Reader.
+	f, err := os.Open("assets/balloon1.jpg")
+	if err != nil {
+		return err
+	}
+	return c.Stream(http.StatusOK, "image/jpg", f)
 }
