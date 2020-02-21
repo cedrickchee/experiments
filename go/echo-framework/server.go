@@ -13,13 +13,26 @@ func main() {
 	// Echo instance
 	e := echo.New()
 
-	// Middleware
+	// Root level middleware
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
+
+	// Group level middleware
+	g := e.Group("/admin")
+	g.Use(middleware.BasicAuth(userAuth))
+
+	// Route level middleware
+	track := func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			println("request to /users")
+			return next(c)
+		}
+	}
 
 	// Routes
 	e.GET("/", hello)
 	e.GET("/users/:id", getUser)
+	e.GET("/users", listUser, track)
 	e.GET("/show", show)
 	e.POST("/save", save)
 	e.POST("/users/save", saveUser)
@@ -112,4 +125,15 @@ func saveBook(c echo.Context) error {
 	return c.JSON(http.StatusCreated, u)
 	// or
 	// c.XML(http.StatusCreated, u)
+}
+
+func userAuth(username, password string, c echo.Context) (bool, error) {
+	if username == "john" && password == "s3creT" {
+		return true, nil
+	}
+	return false, nil
+}
+
+func listUser(c echo.Context) error {
+	return c.String(http.StatusOK, "/users")
 }
