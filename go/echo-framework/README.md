@@ -1,4 +1,4 @@
-# REST API
+# Build Robust and Scalable REST API
 
 Web services built in Go and [Echo](https://github.com/labstack/echo) web framework.
 
@@ -10,3 +10,7 @@ We're using [Reflex](https://github.com/cespare/reflex) to auto-reload applicati
 # Build and run a server; rebuild and restart when .go files change:
 $ reflex -r '\.go$' -s -- sh -c 'go run server.go'
 ```
+
+### Running Recipes
+
+- Go into any cookbook directory and run `go run server.go`
