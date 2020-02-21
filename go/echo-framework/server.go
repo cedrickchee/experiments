@@ -1,7 +1,9 @@
 package main
 
 import (
+	"io"
 	"net/http"
+	"os"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -20,6 +22,7 @@ func main() {
 	e.GET("/users/:id", getUser)
 	e.GET("/show", show)
 	e.POST("/save", save)
+	e.POST("/users/save", saveUser)
 
 	// Start server
 	e.Logger.Fatal(e.Start(":3000"))
@@ -47,4 +50,39 @@ func save(c echo.Context) error {
 	name := c.FormValue("name")
 	email := c.FormValue("email")
 	return c.String(http.StatusOK, "name:"+name+", email:"+email)
+}
+
+func saveUser(c echo.Context) error {
+	// Terminal:
+	// `curl -F "name=John Doe" -F "avatar=@/home/cedric/Downloads/my_avatar.jpg" http://localhost:3000/users/save`
+
+	// Get name
+	name := c.FormValue("name")
+
+	// Get avatar
+	avatar, err := c.FormFile("avatar")
+	if err != nil {
+		return err
+	}
+
+	// Source
+	src, err := avatar.Open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	// Destination
+	dst, err := os.Create(avatar.Filename)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	// Copy
+	if _, err := io.Copy(dst, src); err != nil {
+		return err
+	}
+
+	return c.HTML(http.StatusOK, "<strong>Thank you!"+name+"</strong>")
 }
