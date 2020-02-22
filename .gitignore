@@ -72,3 +72,4 @@ typings/
 # TLS cert and key
 *.crt
 *.key
+*.pem
