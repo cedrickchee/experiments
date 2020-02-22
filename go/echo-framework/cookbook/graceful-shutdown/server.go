@@ -1,3 +1,10 @@
+// An example of graceful shutdown of Go http.Handler servers
+//
+// A side note: if you are using Go 1.8+, you may not need to use external
+// library. Consider using
+// http.Server's built-in [Shutdown()](https://golang.org/pkg/net/http/#Server.Shutdown)
+// method for graceful shutdowns.
+
 package main
 
 import (
