@@ -32,7 +32,7 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Declare, create and initialize struct types [[example code](language/struct_types/example1/example1.go)]
   - Anonymous struct types [[example code](language/struct_types/example2/example2.go)]
   - Named vs Unnamed types [[example code](language/struct_types/example3/example3.go)]
-- Pointers [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/pointers/README.md) | [notes](language/pointers/README.md)]
+- Pointers [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/pointers/README.md) | [notes](language/pointers/README.md) | [exercise 1 solution](language/pointers/exercise1/exercise1.go) | [exercise 2 solution](language/pointers/exercise2/exercise2.go)]
   - Part 1 (Pass by Value) [[example code](language/pointers/example1/example1.go)]
   - Part 2 (Sharing Data) [[example code](language/pointers/example2/example2.go) | [example code](language/pointers/example3/example3.go)]
   - Part 3 (Escape Analysis) [[example code](language/pointers/example4/example4.go)]
