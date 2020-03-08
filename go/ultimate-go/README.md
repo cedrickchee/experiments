@@ -28,7 +28,10 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Zero value concept
   - Declare and initialize variables
   - Conversion vs casting
-- Struct Types [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/struct_types/README.md)]
+- Struct Types [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/struct_types/README.md) | [notes](language/struct_types/README.md)]
+  - Declare, create and initialize struct types [[example code](language/struct_types/example1/example1.go)]
+  - Anonymous struct types [[example code](language/struct_types/example2/example2.go)]
+  - Named vs Unnamed types [[example code](language/struct_types/example3/example3.go)]
 - Pointers [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/pointers/README.md)]
   - Part 1 (Pass by Value)
   - Part 2 (Sharing Data)
