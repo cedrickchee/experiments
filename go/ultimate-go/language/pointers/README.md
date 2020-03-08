@@ -280,11 +280,11 @@ by it.
 Chart:
 Shows the different areas of the garbage collector and where some of that
 STW time is. During GC we have a very quick STW and that's to turn the right
-barrier on. The right barrier one should be really quick.
+barrier on. The write barrier one should be really quick.
 
-#### Right barrier
+#### Write barrier
 
-The idea of the right barrier is that these Go routines that are running
+The idea of the write barrier is that these Go routines that are running
 essentially need to report in what they're doing.
 
 From Go 1.10 and before the only way to stop a process or to bring it to that
