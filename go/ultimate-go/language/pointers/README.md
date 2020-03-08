@@ -5,7 +5,7 @@
 This is one of the most important sections in the class. It help us learn how
 we can look at the impact that our code is having on the machine.
 
-**Everything in Go is pass by value**
+#### Everything in Go is pass by value
 
 All of the code you're writing at some point gets into machine code, and the
 OS's job is to choose a path of execution, a thread to execute those
@@ -25,7 +25,8 @@ Goroutine as a lightweight thread.
 "G"s are very much like "M"s, we could almost, at this point, say that they're
 the same but this is above the OS.
 
-**Goroutine**
+#### Goroutine
+
 When the program starts up, the Go runtime creates a Goroutine.
 
 By the time the goroutine that was created for this Go program wants to execute
@@ -38,7 +39,8 @@ of memory off the stack.
 The stack memory in Go starts out at 2K. It is very small. It can change over
 time. The growing direction of the stack is downward.
 
-**Stack frame**
+#### Stack frame
+
 Every function is given a stack frame, memory execution of a function.
 The size of every stack frame is known at compiled time. No value can be
 placed on a stack unless the compiler knows its size ahead of time. If we don't
@@ -51,7 +53,8 @@ stack frame. Memory below the active frame no longer has integrity because it's
 going to be reused. We leave that memory on the way up because we don't know if
 we would need that again.
 
-**Program boundaries**
+#### Program boundaries
+
 Every time you make a function call, we're crossing over a program boundary.
 We can also have a boundary between goroutines when we will discuss it later.
 
@@ -61,7 +64,8 @@ Passed by value means we make copies and we store copies. Frame allows the
 goroutine to mutate memory without any cause of side effects throughout
 the program.
 
-**Value and pointer semantics behavior**
+#### Value and pointer semantics behavior
+
 If you wanna write code in Go that is optimized for correctness, that you can
 read and understand the impact of things, then your value and your pointer
 semantics are everything.
@@ -82,7 +86,8 @@ If we balance our value and our pointer semantics properly, leveraging the
 aspects of the language helping the cognitive load over memory management, it's
 going to be a lot better for us.
 
-**Factory functions**
+#### Factory functions
+
 We don't have constructors in Go. We don't want that. It hides cost, but what we
 do have is what we call factory functions.
 
@@ -90,10 +95,12 @@ Factory function is a function that creates a value, initializes it for use,
 and returns it back to the caller. This is great for readability, it doesn't
 hide cost, we can read it, and lends to simplicity in terms of construction.
 
-**The ampersand operator**
+#### The ampersand operator
+
 It is very powerful from a readability standpoint. Ampersand means sharing.
 
-**Static code analysis**
+#### Static code analysis
+
 The compiler is able to perform static code analysis called escape analysis.
 Escape analysis determine whether a value gets to be placed on the stack, or
 it escapes to the heap.
@@ -106,25 +113,28 @@ involved.
 An allocation in Go is when an escape analysis determines that a value cannot
 be constructed on the stack, but has to be constructed on the heap.
 
-**Sharing tells us everything**
+#### Sharing tells us everything
+
 The way escape analysis works is it doesn't care about construction.
 Construction in Go tells you nothing. What tells us everything is how a
 value is shared.
 
-**Clever code**
-Example: during the construction, I am telling the compiler I don't want you to
+#### Mixing semantics
+
+Example of clever code: during the construction, I am telling the compiler I don't want you to
 be a value of type `user`. I want it to be a pointer to the value that we are
 constructing. This is nightmare.
 
 We are using pointer semantics during construction, even though we're creating
 a variable, and now we've made this code much harder to read, and we're really
-also **mixing semantics** as we go along the way. Anytime you mix semantics we're
+also mixing semantics as we go along the way. Anytime you mix semantics we're
 going to have a problem.
 
 Make sure that we're using the right semantics and semantic consistency
 all of the time.
 
-**Escape analysis report**
+#### Escape analysis report
+
 When you use the `gcflags` on the `go build` calls, what you're gonna get is
 not a binary, but we're gonna get the escape analysis report. This report tells
 us why something is allocating.
@@ -152,7 +162,8 @@ Basically, imagine that we had our stack, we had some value there, and imagine
 we were even sharing this value as we move down the call stack. Eventually, we
 run out of stack space.
 
-**Go contiguous stacks**
+#### Go contiguous stacks
+
 What it's going to do is allocate a larger stack, 25% larger than the original
 one, and then, what it's got to do is copy all these frames back over, in this
 case, these pointers are relative, so they're very fast to fix. But, basically,
@@ -202,7 +213,8 @@ Imagine, we had all of these stacks all over the place, hundreds of thousands
 of Go routines with pointers to each other's stacks. That would be total chaos
 if one stack had to grow.
 
-**Local pointers**
+#### Local pointers
+
 Since our stacks can move, it means that the only pointers to a stack would be
 local pointers. Only that stack memory is for the Go routine. Stack memory
 cannot be shared across Go routines.
@@ -217,14 +229,16 @@ we care about is it fast enough.
 
 ### Garbage Collection (GC)
 
-**The design of the Go GC**
+#### The design of the Go GC
+
 Go 1.10: It's call a tri-color mark and sweep concurrent collector.
 It's not a compacting garbage collector, memory on our heap does not move
 around, which is getting interesting because memory on our stacks potentially
 are. Once an allocation is made on the heap, it stays there until it gets
 swept away.
 
-**Pacing algorithm**
+#### Pacing algorithm
+
 Everything begins and ends with the pacing algorithm.
 The GC has an algorithm and the pacing algorithm.
 
@@ -233,16 +247,19 @@ smallest heap size run at a reasonable pace where the stop the word latency time
 is under a 100 microseconds and were able to even leverage less than or up to
 25% of your available CPU capacity.
 
-**CPU capacity cost**
+#### CPU capacity cost
+
 Where could the 25% come from? The garbage collector uses Go heap as well. Go is
 written in Go the runtime and the compiler.
 
-**Different types of garbage collectors**
+#### Different types of garbage collectors
+
 Each one has their own thing where the GC maybe run at a high level of
 performance to get done quickly. Go is about the lower latency and we all just
 run together and we do things that are very constant and consistent pace.
 
-**Heap size**
+#### Heap size
+
 Diagram:
 The size of your heap and the live heap.
 Live heap contains maybe a map of a caching system.
@@ -265,7 +282,8 @@ Shows the different areas of the garbage collector and where some of that
 STW time is. During GC we have a very quick STW and that's to turn the right
 barrier on. The right barrier one should be really quick.
 
-**Right barrier**
+#### Right barrier
+
 The idea of the right barrier is that these Go routines that are running
 essentially need to report in what they're doing.
 
@@ -274,7 +292,8 @@ safe point is to wait for a Go routine to make a function call.
 Scheduling happens during function calls, this because we have a cooperative
 scheduler, not a preemptive scheduler.
 
-**The heap is a very large graph**
+#### The heap is a very large graph
+
 We have two things. We have our stacks, and our stacks have frames and in
 some cases these frames are going to have values that point to values on the
 heap. You're gonna have other values here and some values can point to
@@ -286,7 +305,8 @@ entire tree that when we're done, all we have left are black values or white
 values. Anything that's black has to stay in memory because there's a reference
 to it from a stack.
 
-**Balance value in pointer semantics**
+#### Balance value in pointer semantics
+
 We have to leverage value semantics to their fullest extent and know when to
 use the pointer semantics, understand the costs and the benefits of these things
 and try to reduce the amount of allocations our program is having.
