@@ -32,11 +32,12 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Declare, create and initialize struct types [[example code](language/struct_types/example1/example1.go)]
   - Anonymous struct types [[example code](language/struct_types/example2/example2.go)]
   - Named vs Unnamed types [[example code](language/struct_types/example3/example3.go)]
-- Pointers [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/pointers/README.md)]
-  - Part 1 (Pass by Value)
-  - Part 2 (Sharing Data)
-  - Part 3 (Escape Analysis)
-  - Part 4 (Stack Growth)
+- Pointers [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/pointers/README.md) | [notes](language/pointers/README.md)]
+  - Part 1 (Pass by Value) [[example code](language/pointers/example1/example1.go)]
+  - Part 2 (Sharing Data) [[example code](language/pointers/example2/example2.go) | [example code](language/pointers/example3/example3.go)]
+  - Part 3 (Escape Analysis) [[example code](language/pointers/example4/example4.go)]
+  - Part 4 (Stack Growth) [[example code](language/pointers/example5/example5.go)]
+  - Part 5 (Garbage Collection)
 - Constants [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/constants/README.md)]
 - Functions [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/functions/README.md)]
 
