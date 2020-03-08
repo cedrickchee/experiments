@@ -23,8 +23,11 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 2: Language Syntax
 
-- Variables [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/variables/README.md)]
-  - Built-in types, zero value concept, declare and initialize variables, conversion vs casting [[code](language/variable/example1/example1.go)]
+- Variables [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/variables/README.md) | [example code](language/variables/example1/example1.go) | [notes](language/variables/example1/README.md)]
+  - Built-in types
+  - Zero value concept
+  - Declare and initialize variables
+  - Conversion vs casting
 - Struct Types [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/struct_types/README.md)]
 - Pointers [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/pointers/README.md)]
   - Part 1 (Pass by Value)
