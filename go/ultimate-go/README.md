@@ -23,7 +23,7 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 2: Language Syntax
 
-- Variables [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/variables/README.md) | [example code](language/variables/example1/example1.go) | [notes](language/variables/example1/README.md)]
+- Variables [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/variables/README.md) | [example code](language/variables/example1/example1.go) | [notes](language/variables/example1/README.md) | [exercise 1 solution](language/variables/exercise1/exercise1.go)]
   - Built-in types
   - Zero value concept
   - Declare and initialize variables
