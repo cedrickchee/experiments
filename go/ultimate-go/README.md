@@ -56,7 +56,7 @@ This project contains the [training class material](https://github.com/ardanlabs
 - Data-Oriented Design
   - [Design guidelines](https://github.com/ardanlabs/gotraining/blob/master/topics/go/#data-oriented-design) for data oriented design.
   - [[Notes](language/arrays/data_oriented_design.md)]
-- Arrays [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/arrays/README.md)]
+- Arrays [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/arrays/README.md) | [notes](language/arrays/README.md)]
   - Part 1 (Mechanical Sympathy)
   - Part 2 (Semantics)
 - Slices [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/slices/README.md)]
