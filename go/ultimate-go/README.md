@@ -48,6 +48,8 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Blank identifier [[example code](language/functions/example2/example2.go)]
   - Redeclarations [[example code](language/functions/example3/example3.go)]
   - Anonymous Functions/Closures [[example code](language/functions/example4/example4.go)]
+  - Advanced code review
+    - Recover panics [[example code](language/functions/advanced/example1/example1.go)]
 
 #### Lesson 3: Data Structures
 
