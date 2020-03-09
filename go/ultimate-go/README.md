@@ -38,7 +38,11 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Part 3 (Escape Analysis) [[example code](language/pointers/example4/example4.go)]
   - Part 4 (Stack Growth) [[example code](language/pointers/example5/example5.go)]
   - Part 5 (Garbage Collection)
-- Constants [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/constants/README.md)]
+- Constants [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/constants/README.md) | [notes](language/constants/README.md)]
+  - Declare and initialize constants [[example code](language/constants/example1/example1.go)]
+  - Parallel type system (Kind) [[example code](language/constants/example2/example2.go)]
+  - iota  [[example code](language/constants/example3/example3.go)]
+  - Implicit conversion [[example code](language/constants/example4/example4.go)]
 - Functions [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/functions/README.md)]
 
 #### Lesson 3: Data Structures
