@@ -43,7 +43,11 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Parallel type system (Kind) [[example code](language/constants/example2/example2.go)]
   - iota  [[example code](language/constants/example3/example3.go)]
   - Implicit conversion [[example code](language/constants/example4/example4.go)]
-- Functions [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/functions/README.md)]
+- Functions [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/functions/README.md) | [notes](language/functions/README.md)]
+  - Return multiple values [[example code](language/functions/example1/example1.go)]
+  - Blank identifier [[example code](language/functions/example2/example2.go)]
+  - Redeclarations [[example code](language/functions/example3/example3.go)]
+  - Anonymous Functions/Closures [[example code](language/functions/example4/example4.go)]
 
 #### Lesson 3: Data Structures
 
