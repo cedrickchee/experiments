@@ -59,6 +59,10 @@ This project contains the [training class material](https://github.com/ardanlabs
 - Arrays [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/arrays/README.md) | [notes](language/arrays/README.md)]
   - Part 1 (Mechanical Sympathy)
   - Part 2 (Semantics)
+    - Declare, initialize and iterate [[example code](language/arrays/example1/example1.go)]
+    - Different type arrays [[example code](language/arrays/example2/example2.go)]
+    - Contiguous memory allocations [[example code](language/arrays/example3/example3.go)]
+    - Range mechanics [[example code](language/arrays/example4/example4.go)]
 - Slices [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/slices/README.md)]
   - Part 1 (Declare and Length and Reference Types)
   - Part 2 (Appending Slices)
