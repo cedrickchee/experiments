@@ -90,3 +90,137 @@ We don't have a virtual machine here. You have the real machine, which means you
 What it means is, if you use the slice, which is the most important data structure in Go, if you use it for the majority of your data needs, you are inherently creating predictable access patterns to memory, you are inherently being mechanically sympathetic, and by the way, the Go map also is constantly creating data underneath it that is contiguous. Think about it, your stacks, contiguous memory. Your slice, a vector, contiguous memory. A slice of values is our first choice, until it is not reasonable or practical to do so.
 
 ### Part 2 - Semantics
+
+#### Declare and initialize
+
+```go
+var strings [5]string
+```
+
+Declare an array of five strings that is initialized to its zero value.
+
+Remember: a string is a 2 word data structure: a pointer and a length.
+
+Since this array is set to its zero value, every string in this array is also
+set to its zero value (empty string), which means that each string has the
+first word pointed to nil and second word is 0.
+
+```
+40 bytes of memory [5 * 8 bytes]. 2 word data structure:
+
+         -------------------------------
+pointer  | nil | nil | nil | nil | nil |
+         -------------------------------
+length   |  0  |  0  |  0  |  0  |  0  |
+         -------------------------------
+```
+
+```go
+fruits[0] = "Apple" // a literal string named Apple
+```
+
+At index 0, a string now has a pointer to a backing array of bytes (characters
+in string) and its length is 5.
+
+**What is the cost?**
+
+The cost of this assignment is the cost of copying 2 bytes.
+We have two string values that have pointers to the same backing array of bytes.
+Therefore, the cost of this assignment is just 2 words.
+
+```
+        -------------------------------
+    --- |  *  | nil | nil | nil | nil |
+    |   -------------------------------
+    |   |  5  |  0  |  0  |  0  |  0  |
+    |   -------------------------------
+    |
+    ---------------------
+                        |
+                        V
+-------       ---------------------
+|  *  |  ---> | A | p | p | l | e | (1)
+-------       ---------------------
+|  5  |
+-------
+```
+
+#### Iterate over the array
+
+```go
+for i, fruit := range strings {
+    fmt.Println(i, fruit)
+}
+```
+
+Using `range`, not only we can get the index but also a copy of the value in the
+array. `fruit` is now a string value; its scope is within the for statement.
+In the first iteration, we have the word "Apple". It is a string that has the
+first word also points to (1) and the second word is 5. So we now have 3
+different string value all sharing the same backing array.
+
+What are we passing to the `Println` function?
+
+We are using value semantic here. We are not sharing our string value.
+`Println` is getting its own copy, its own string value. It means when we get
+to the `Println` call, there are now 4 string values all sharing the same
+backing array.
+
+We don't want to take an address of a string. We know the size of a string
+ahead of time.
+- it has the ability to be on the stack.
+- not creating allocation.
+- not causing pressure on the GC.
+- the string has been designed to leverage value mechanic, to stay on the stack,
+out of the way of creating garbage.
+- the only thing that has to be on the heap, if anything is the backing array,
+which is the one thing that being shared.
+
+#### Contiguous memory allocations
+
+```go
+// Declare an array of 5 strings initialized with values.
+friends := [5]string{"Annie", "Betty", "Charley", "Doug", "Edward"}
+
+for i, v := range friends {
+    fmt.Printf("Value[%s]\tAddress[%p] IndexAddr[%p]\n", v, &v, &friends[i])
+}
+
+// Prints:
+// Value[Annie]    Address[0xc00009a040] IndexAddr[0xc00009c000]
+// Value[Betty]    Address[0xc00009a040] IndexAddr[0xc00009c010]
+// Value[Charley]  Address[0xc00009a040] IndexAddr[0xc00009c020]
+// Value[Doug]     Address[0xc00009a040] IndexAddr[0xc00009c030]
+// Value[Edward]   Address[0xc00009a040] IndexAddr[0xc00009c040]
+```
+
+Iterate over the array displaying the value and address of each element.
+By looking at the output of this `Printf` function, we can see that this array
+is truly a contiguous block of memory. We know a string is 2 word and depending
+on computer architecture, it will have x byte. The distance between two
+consecutive `IndexAddr` is exactly x byte. `v` is its own variable on the stack
+and it has the same address every single time.
+
+
+#### Different type arrays
+
+Arrays of different sizes are not of the same type.
+
+```go
+// Declare an array of 5 integers that is initialized to its zero value.
+var five [5]int
+
+// Declare an array of 4 integers that is initialized with some values.
+four := [4]int{10, 20, 30, 40}
+
+// Assign one array to the other
+five = four
+```
+
+When we try to assign `four` to `five`, the compiler says that "cannot use
+four (type [4]int) as type [5]int in assignment". This cannot happen because
+they have different types (size and representation). The size of an array makes
+up its type name: `[4]int` versus [5]int. Just like what we've seen with
+pointer. The `*` in `*int` is not an operator but part of the type name.
+
+Unsurprisingly, all array has known size at compiled time.
