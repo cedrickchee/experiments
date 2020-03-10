@@ -73,7 +73,7 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Part 5 (Strings and Slices) [[example code](language/slices/example6/example6.go)]
   - Part 6 (Range Mechanics) [[example code](language/slices/example8/example8.go)]
   - Part 7 (Variadic Functions) [[example code](language/slices/example7/example7.go)]
-- Maps [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/maps/README.md) | [notes](language/maps/README.md)]
+- Maps [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/maps/README.md) | [notes](language/maps/README.md) | [exercise 1 solution](language/maps/exercise1/exercise1.go)]
   - Declare, write, read, and delete [[example code](language/maps/example1/example1.go)]
   - Absent keys [[example code](language/maps/example2/example2.go)]
   - Map key restrictions [[example code](language/maps/example3/example3.go)]
