@@ -84,7 +84,7 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 4: Decoupling
 
-- Methods [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/methods/README.md) | [notes](language/methods/README.md)]
+- Methods [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/methods/README.md) | [notes](language/methods/README.md) | [exercise 1 solution](language/methods/exercise1/exercise1.go)]
   - Part 1 (Declare and Receiver Behavior) [[example code](language/methods/example1/example1.go)]
   - Part 2 (Value and Pointer Semantics) [[example code](language/methods/example5/example5.go)]
   - Part 3 (Function/Method Variables) [[example code](language/methods/example3/example3.go)]
