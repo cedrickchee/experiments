@@ -73,14 +73,14 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Part 5 (Strings and Slices) [[example code](language/slices/example6/example6.go)]
   - Part 6 (Range Mechanics) [[example code](language/slices/example8/example8.go)]
   - Part 7 (Variadic Functions) [[example code](language/slices/example7/example7.go)]
-- Maps [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/maps/README.md)]
-  - Declare, write, read, and delete
-  - Absent keys
-  - Map key restrictions
-  - Map literals and range
-  - Sorting maps by key
-  - Taking an element's address
-  - Maps are Reference Types
+- Maps [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/maps/README.md) | [notes](language/maps/README.md)]
+  - Declare, write, read, and delete [[example code](language/maps/example1/example1.go)]
+  - Absent keys [[example code](language/maps/example2/example2.go)]
+  - Map key restrictions [[example code](language/maps/example3/example3.go)]
+  - Map literals and range [[example code](language/maps/example4/example4.go)]
+  - Sorting maps by key [[example code](language/maps/example5/example5.go)]
+  - Taking an element's address [[example code](language/maps/example6/example6.go)]
+  - Maps are Reference Types [[example code](language/maps/example7/example7.go)]
 
 #### Lesson 4: Decoupling
 
