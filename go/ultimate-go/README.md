@@ -63,14 +63,16 @@ This project contains the [training class material](https://github.com/ardanlabs
     - Different type arrays [[example code](language/arrays/example2/example2.go)]
     - Contiguous memory allocations [[example code](language/arrays/example3/example3.go)]
     - Range mechanics [[example code](language/arrays/example4/example4.go)]
-- Slices [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/slices/README.md)]
-  - Part 1 (Declare and Length and Reference Types)
-  - Part 2 (Appending Slices)
-  - Part 3 (Taking Slices of Slices)
-  - Part 4 (Slices and References)
-  - Part 5 (Strings and Slices)
-  - Part 6 (Range Mechanics)
-  - Part 7 (Variadic Functions)
+- Slices [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/slices/README.md) | [notes](language/slices/README.md)]
+  - Part 1
+    - Declare and Length [[example code](language/slices/example1/example1.go)]
+    - Reference Types [[example code](language/slices/example2/example2.go)]
+  - Part 2 (Appending Slices) [[example code](language/slices/example4/example4.go)]
+  - Part 3 (Taking Slices of Slices) [[example code](language/slices/example3/example3.go)]
+  - Part 4 (Slices and References) [[example code](language/slices/example5/example5.go)]
+  - Part 5 (Strings and Slices) [[example code](language/slices/example6/example6.go)]
+  - Part 6 (Range Mechanics) [[example code](language/slices/example8/example8.go)]
+  - Part 7 (Variadic Functions) [[example code](language/slices/example7/example7.go)]
 - Maps [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/maps/README.md)]
   - Declare, write, read, and delete
   - Absent keys
