@@ -63,7 +63,7 @@ This project contains the [training class material](https://github.com/ardanlabs
     - Different type arrays [[example code](language/arrays/example2/example2.go)]
     - Contiguous memory allocations [[example code](language/arrays/example3/example3.go)]
     - Range mechanics [[example code](language/arrays/example4/example4.go)]
-- Slices [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/slices/README.md) | [notes](language/slices/README.md)]
+- Slices [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/slices/README.md) | [notes](language/slices/README.md) | [exercise 1 solution](language/slices/exercise1/exercise1.go)]
   - Part 1
     - Declare and Length [[example code](language/slices/example1/example1.go)]
     - Reference Types [[example code](language/slices/example2/example2.go)]
