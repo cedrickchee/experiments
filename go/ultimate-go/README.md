@@ -90,14 +90,16 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Part 3 (Function/Method Variables) [[example code](language/methods/example3/example3.go)]
   - Part 4 (Named Typed Methods) [[example code](language/methods/example2/example2.go)]
   - Part 5 (Function Types) [[example code](language/methods/example4/example4.go)]
-- Interfaces [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/interfaces/README.md)]
-  - Part 1 (Polymorphism)
-  - Part 2 (Method Sets and Address of Value)
-  - Part 3 (Storage By Value)
-  - Part 4 (Repetitive Code That Needs Polymorphism)
-  - Part 5 (Type Assertions)
-  - Part 6 (Conditional Type Assertions)
-  - Part 7 (The Empty Interface and Type Switches)
+- Interfaces [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/interfaces/README.md) | [notes](language/interfaces/README.md)]
+  - Part 1 (Polymorphism) [[example code](language/interfaces/example1/example1.go)]
+  - Part 2
+    - Method Sets [[example code](language/interfaces/example2/example2.go)]
+    - Address of Value [[example code](language/interfaces/example3/example3.go)]
+  - Part 3 (Storage By Value) [[example code](language/interfaces/example4/example4.go)]
+<!--  - Part 4 (Repetitive Code That Needs Polymorphism)  [[example code](language/interfaces/example0/example0.go)]
+  - Part 5 (Type Assertions) [[example code](language/interfaces/example5/example5.go)]
+  - Part 6 (Conditional Type Assertions) [[example code](language/interfaces/example6/example6.go)]
+  - Part 7 (The Empty Interface and Type Switches) [[example code](language/interfaces/example7/example7.go)] -->
 - Embedding [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/embedding/README.md)]
   - Declaring Fields
   - Embedding types
