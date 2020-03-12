@@ -148,7 +148,7 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 6: Error Handling
 
-- Error Handling Design [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/design/error_handling/README.md) | [notes](design/error_handling/README.md)]
+- Error Handling Design [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/design/error_handling/README.md) | [notes](design/error_handling/README.md) | [exercise 1 solution](design/error_handling/exercise1/exercise1.go) | [exercise 2 solution](design/error_handling/exercise2/exercise2.go)]
 - Default Error Values [example code](design/error_handling/example1/example1.go)
 - Error Variables [example code](design/error_handling/example2/example2.go)
 - Type As Context [example code](design/error_handling/example3/example3.go)
