@@ -145,3 +145,13 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Package To Mock
   - Client
 - Design Guidelines
+
+#### Lesson 6: Error Handling
+
+- Error Handling Design [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/design/error_handling/README.md) | [notes](design/error_handling/README.md)]
+- Default Error Values [example code](design/error_handling/example1/example1.go)
+- Error Variables [example code](design/error_handling/example2/example2.go)
+- Type As Context [example code](design/error_handling/example3/example3.go)
+- Behavior As Context [example code](design/error_handling/example4/example4.go)
+- Find The Bug [example code](design/error_handling/example5/example5.go) | [the reason](design/error_handling/example5/reason/reason.go)
+- Wrapping Errors [Wrapping Errors](design/error_handling/example6/example6.go)
