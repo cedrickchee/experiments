@@ -90,7 +90,7 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Part 3 (Function/Method Variables) [[example code](language/methods/example3/example3.go)]
   - Part 4 (Named Typed Methods) [[example code](language/methods/example2/example2.go)]
   - Part 5 (Function Types) [[example code](language/methods/example4/example4.go)]
-- Interfaces [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/interfaces/README.md) | [notes](language/interfaces/README.md)]
+- Interfaces [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/interfaces/README.md) | [notes](language/interfaces/README.md) | [exercise 1 solution](language/interfaces/exercise1/exercise1.go)]
   - Part 1 (Polymorphism) [[example code](language/interfaces/example1/example1.go)]
   - Part 2
     - Method Sets [[example code](language/interfaces/example2/example2.go)]
