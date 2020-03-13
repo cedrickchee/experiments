@@ -105,17 +105,17 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Embedding types [[example code](language/embedding/example2/example2.go)]
   - Embedded types and interfaces [[example code](language/embedding/example3/example3.go)]
   - Outer and inner type interface implementations [[example code](language/embedding/example4/example4.go)]
-- Exporting [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/exporting/README.md)]
-  - Declare and access exported identifiers - Pkg
-  - Declare and access exported identifiers - Main
-  - Declare unexported identifiers and restrictions - Pkg
-  - Declare unexported identifiers and restrictions - Main
-  - Access values of unexported identifiers - Pkg
-  - Access values of unexported identifiers - Main
-  - Unexported struct type fields - Pkg
-  - Unexported struct type fields - Main
-  - Unexported embedded types - Pkg
-  - Unexported embedded types - Main
+- Exporting [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/exporting/README.md) | [notes](language/exporting/README.md)]
+  - Declare and access exported identifiers - Pkg [[example code](language/exporting/example1/counters/counters.go)]
+  - Declare and access exported identifiers - Main [[example code](language/exporting/example1/example1.go)]
+  - Declare unexported identifiers and restrictions - Pkg [[example code](language/exporting/example2/counters/counters.go)]
+  - Declare unexported identifiers and restrictions - Main [[example code](language/exporting/example2/example2.go)]
+  - Access values of unexported identifiers - Pkg [[example code](language/exporting/example3/counters/counters.go)]
+  - Access values of unexported identifiers - Main [[example code](language/exporting/example3/example3.go)]
+  - Unexported struct type fields - Pkg [[example code](language/exporting/example4/users/users.go)]
+  - Unexported struct type fields - Main [[example code](language/exporting/example4/example4.go)]
+  - Unexported embedded types - Pkg [[example code](language/exporting/example5/users/users.go)]
+  - Unexported embedded types - Main [[example code](language/exporting/example5/example5.go)]
 
 ### Software Design
 
