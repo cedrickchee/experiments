@@ -100,7 +100,7 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Part 5 (Type Assertions) [[example code](language/interfaces/example5/example5.go)]
   - Part 6 (Conditional Type Assertions) [[example code](language/interfaces/example6/example6.go)]
   - Part 7 (The Empty Interface and Type Switches) [[example code](language/interfaces/example7/example7.go)] -->
-- Embedding [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/embedding/README.md) | [notes](language/embedding/README.md) | [exercise 1 solution](language/embedding/exercise1/exercise1.go)]
+- Embedding [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/language/embedding/README.md) | [notes](language/embedding/README.md) | [exercise 1 solution](language/embedding/exercise1/exercise1.go) | [exercise 1 solution](language/exporting/exercise1/exercise1.go)]
   - Declaring Fields [[example code](language/embedding/example1/example1.go)]
   - Embedding types [[example code](language/embedding/example2/example2.go)]
   - Embedded types and interfaces [[example code](language/embedding/example3/example3.go)]
