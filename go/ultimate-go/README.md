@@ -123,28 +123,28 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 5: Composition
 
-- Interface and Composition Design [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/design/composition/README.md)]
+- Composition [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/design/composition/README.md)]
+- Design Guidelines [[docs](https://github.com/ardanlabs/gotraining/tree/master/topics/go#interface-and-composition-design)]
 - Grouping Types
-  - Grouping By State
-  - Grouping By Behavior
+  - Grouping By State [[example code](design/composition/grouping/example1/example1.go)]
+  - Grouping By Behavior [[example code](design/composition/grouping/example2/example2.go)]
 - Decoupling
-  - Struct Composition
-  - Decoupling With Interface
-  - Interface Composition
-  - Decoupling With Interface Composition
-  - Remove Interface Pollution
-  - More Precise API
+  - Struct Composition [[example code](design/composition/decoupling/example1/example1.go)]
+  - Decoupling With Interface [[example code](design/composition/decoupling/example2/example2.go)]
+  - Interface Composition [[example code](design/composition/decoupling/example3/example3.go)]
+  - Decoupling With Interface Composition [[example code](design/composition/decoupling/example4/example4.go)]
+  - Remove Interface Pollution [[example code](design/composition/decoupling/example5/example5.go)]
+  - More Precise API [[example code](design/composition/decoupling/example6/example6.go)]
 - Conversion and Assertions
-  - Interface Conversions
-  - Runtime Type Assertions
-  - Behavior Changes
+  - Interface Conversions [[example code](design/composition/assertions/example1/example1.go)]
+  - Runtime Type Assertions [[example code](design/composition/assertions/example2/example2.go)]
+  - Behavior Changes [[example code](design/composition/assertions/example3/example3.go)]
 - Interface Pollution
-  - Create Interface Pollution
-  - Remove Interface Pollution
+  - Create Interface Pollution [[example code](design/composition/pollution/example1/example1.go)]
+  - Remove Interface Pollution [[example code](design/composition/pollution/example2/example2.go)]
 - Mocking
-  - Package To Mock
-  - Client
-- Design Guidelines
+  - Package To Mock [[example code](design/composition/mocking/example1/pubsub/pubsub.go)]
+  - Client [[example code](design/composition/mocking/example1/example1.go)]
 
 #### Lesson 6: Error Handling
 
