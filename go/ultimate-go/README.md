@@ -123,7 +123,7 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 5: Composition
 
-- Composition [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/design/composition/README.md)]
+- Composition [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/design/composition/README.md) | [notes](design/composition/README.md) | [exercise 1 solution](design/composition/exercises/exercise1/exercise1.go)]
 - Design Guidelines [[docs](https://github.com/ardanlabs/gotraining/tree/master/topics/go#interface-and-composition-design)]
 - Grouping Types
   - Grouping By State [[example code](design/composition/grouping/example1/example1.go)]
