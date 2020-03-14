@@ -155,3 +155,10 @@ This project contains the [training class material](https://github.com/ardanlabs
 - Behavior As Context [example code](design/error_handling/example4/example4.go)
 - Find The Bug [example code](design/error_handling/example5/example5.go) | [the reason](design/error_handling/example5/reason/reason.go)
 - Wrapping Errors [Wrapping Errors](design/error_handling/example6/example6.go)
+
+#### Lesson 7: Packaging
+
+- Language Mechanics [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/design/packaging/README.md#language-mechanics)]
+- Design Guidelines [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/design/packaging/README.md#design-philosophy)]
+- Package-Oriented Design [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/design/packaging/README.md#package-oriented-design)]
+- [Notes](design/packaging/README.md)
