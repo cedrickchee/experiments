@@ -162,3 +162,77 @@ This project contains the [training class material](https://github.com/ardanlabs
 - Design Guidelines [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/design/packaging/README.md#design-philosophy)]
 - Package-Oriented Design [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/design/packaging/README.md#package-oriented-design)]
 - [Notes](design/packaging/README.md)
+
+### Concurrency
+
+- Topics [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/courses/go/concurrency/README.md)]
+
+#### Lesson 8: Mechanics - Goroutines
+
+- Go Scheduler Internals
+- Language Mechanics
+- Goroutine Time Slicing
+- Goroutine and Parallelism
+
+#### Lesson 9: Mechanics - Data Races
+
+- Data Race and Race Detection
+- Synchronization with Atomic Functions
+- Synchronization with Mutexes
+- Read/Write Mutex
+- Map Data Race
+- Interface-Based Race Condition
+
+#### Lesson 10: Mechanics - Channels
+
+- Design Guidelines [[docs](https://github.com/ardanlabs/gotraining/tree/master/topics/go#concurrent-software-design)]
+- Signaling Semantics
+  - Language Mechanics | Unbuffered channel: Signaling with(out) data
+  - Unbuffered channel: Double signal | Buffered channel: Close and range | Unbuffered channel: select and receive | Unbuffered channel: select and send | Buffered channel: Select and drop
+- Unbuffered channel (Tennis match)
+- Unbuffered channel (Replay race)
+- Fan Out Pattern
+- Select
+- Pooling Pattern
+
+#### Lesson 11: Concurreny Patterns
+
+- Context
+  - Store / Retrieve context values
+  - WithCancel
+  - WithDeadline
+  - WithTimeout
+  - Request/Response
+- Cancellation Pattern
+- Failure Detection
+
+### Testing and Profiling
+
+- Topics [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/courses/go/tooling/README.md)]
+
+#### Lesson 12: Testing
+
+- Basic Unit Testing
+- Table Unit Testing
+- Mocking Server
+- Testing Internal Endpoints
+- Sub Tests
+- Code Coverage
+
+#### Lesson 13: Benchmarking
+
+- Basic Benchmarking
+- Sub Benchmarks
+- Validate Benchmarks
+
+#### Lesson 14: Profiling and Tracing
+
+- Profiling Guidelines
+- Stack Traces
+- Micro Level Optimization
+- Macro Level Optimization
+  - Part 1: GODEBUG Tracing
+  - Part 2: Memory Profiling
+  - Part 3: Tooling Changes
+  - Part 4: CPU Profiling
+- Execution Tracing
