@@ -169,10 +169,14 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 8: Mechanics - Goroutines
 
-- Go Scheduler Internals
-- Language Mechanics
-- Goroutine Time Slicing
-- Goroutine and Parallelism
+- Goroutines [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/concurrency/goroutines/README.md) | [notes](concurrency/goroutines/README.md)]
+- Scheduling in Go
+  - Part 1 (OS Scheduler) [[article](https://www.ardanlabs.com/blog/2018/08/scheduling-in-go-part1.html)]
+  - Part 2 (Go Scheduler) [[article](https://www.ardanlabs.com/blog/2018/08/scheduling-in-go-part2.html)]
+  - Part 3 (Concurrency) [[article](https://www.ardanlabs.com/blog/2018/12/scheduling-in-go-part3.html)]
+- Language Mechanics [[example code](concurrency/goroutines/example1/example1.go)]
+- Goroutine Time Slicing [[example code](concurrency/goroutines/example2/example2.go)]
+- Goroutine and Parallelism [[example code](concurrency/goroutines/example3/example3.go)]
 
 #### Lesson 9: Mechanics - Data Races
 
