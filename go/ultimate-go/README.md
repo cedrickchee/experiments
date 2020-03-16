@@ -169,7 +169,7 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 8: Mechanics - Goroutines
 
-- Goroutines [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/concurrency/goroutines/README.md) | [notes](concurrency/goroutines/README.md)]
+- Goroutines [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/concurrency/goroutines/README.md) | [notes](concurrency/goroutines/README.md) | [exercise 1 solution](concurrency/goroutines/exercises/exercise1/exercise1.go)]
 - Scheduling in Go
   - Part 1 (OS Scheduler) [[article](https://www.ardanlabs.com/blog/2018/08/scheduling-in-go-part1.html)]
   - Part 2 (Go Scheduler) [[article](https://www.ardanlabs.com/blog/2018/08/scheduling-in-go-part2.html)]
