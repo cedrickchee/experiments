@@ -180,7 +180,7 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 9: Mechanics - Data Races
 
-- Data Races [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/concurrency/data_race/README.md) | [notes](concurrency/data_race/README.md) | [exercise 1 solution](concurrency/goroutines/exercise1/exercise1.go)]
+- Data Races [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/concurrency/data_race/README.md) | [notes](concurrency/data_race/README.md) | [exercise 1 solution](concurrency/data_race/exercise1/exercise1.go)]
 - Data Race and Race Detection [[example code](concurrency/data_race/example1/example1.go)]
 - Synchronization with Atomic Functions [[example code](concurrency/data_race/example2/example2.go)]
 - Synchronization with Mutexes [[example code](concurrency/data_race/example3/example3.go)]
