@@ -180,12 +180,13 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 9: Mechanics - Data Races
 
-- Data Race and Race Detection
-- Synchronization with Atomic Functions
-- Synchronization with Mutexes
-- Read/Write Mutex
-- Map Data Race
-- Interface-Based Race Condition
+- Data Races [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/concurrency/data_race/README.md) | [notes](concurrency/data_race/README.md)]
+- Data Race and Race Detection [[example code](concurrency/data_race/example1/example1.go)]
+- Synchronization with Atomic Functions [[example code](concurrency/data_race/example2/example2.go)]
+- Synchronization with Mutexes [[example code](concurrency/data_race/example3/example3.go)]
+- Read/Write Mutex [[example code](concurrency/data_race/example4/example4.go)]
+- Map Data Race [[example code](concurrency/data_race/example5/example5.go)]
+- Interface-Based Race Condition [[example code](concurrency/data_race/advanced/example1/example1.go)]
 
 #### Lesson 10: Mechanics - Channels
 
