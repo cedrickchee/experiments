@@ -102,7 +102,7 @@ Diagrams:
 - [Signaling With Or Without Data](https://github.com/ardanlabs/gotraining/blob/master/topics/go/concurrency/channels/README.md#signaling-with-or-without-data)
 - [State](https://github.com/ardanlabs/gotraining/blob/master/topics/go/concurrency/channels/README.md#state)
 
-#### Language Mechanics | Unbuffered channel: Signaling with(out) data
+#### Language Mechanics
 
 Back to the example, it's not important that we know exactly the signaling data
 was received but we do have to make sure that it was. The buffered channel of 1
