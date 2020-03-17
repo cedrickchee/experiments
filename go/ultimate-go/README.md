@@ -190,7 +190,7 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 10: Mechanics - Channels
 
-- Channels [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/concurrency/channels/README.md) | [notes](concurrency/channels/README.md)]
+- Channels [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/concurrency/channels/README.md) | [notes](concurrency/channels/README.md) | [exercise 1 solution](concurrency/channels/exercises/exercise1/exercise1.go) | [exercise 2 solution](concurrency/channels/exercises/exercise2/exercise2.go) | [exercise 3 solution](concurrency/channels/exercises/exercise3/exercise3.go) | [exercise 4 solution](concurrency/channels/exercises/exercise4/exercise4.go)]
 - Design Guidelines [[docs](https://github.com/ardanlabs/gotraining/tree/master/topics/go#channel-design)]
 - Signaling Semantics
   - Language Mechanics
