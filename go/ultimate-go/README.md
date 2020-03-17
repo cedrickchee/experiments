@@ -190,15 +190,20 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 10: Mechanics - Channels
 
-- Design Guidelines [[docs](https://github.com/ardanlabs/gotraining/tree/master/topics/go#concurrent-software-design)]
+- Channels [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/concurrency/channels/README.md) | [notes](concurrency/channels/README.md)]
+- Design Guidelines [[docs](https://github.com/ardanlabs/gotraining/tree/master/topics/go#channel-design)]
 - Signaling Semantics
-  - Language Mechanics | Unbuffered channel: Signaling with(out) data
-  - Unbuffered channel: Double signal | Buffered channel: Close and range | Unbuffered channel: select and receive | Unbuffered channel: select and send | Buffered channel: Select and drop
-- Unbuffered channel (Tennis match)
-- Unbuffered channel (Replay race)
+  - Language Mechanics
+- Basic Patterns
+  - Part 1 (Wait for Task) [[example code](concurrency/channels/example1/example1.go)]
+  - Part 2 (Wait for Result) [[example code](concurrency/channels/example1/example1.go)]
+  - Part 3 (Wait for Finished) [[example code](concurrency/channels/example1/example1.go)]
+- Pooling Pattern [[example code](concurrency/channels/example1/example1.go)]
 - Fan Out Pattern
-- Select
-- Pooling Pattern
+  - Part 1 [[example code](concurrency/channels/example1/example1.go)]
+  - Part 2 [[example code](concurrency/channels/example1/example1.go)]
+- Drop Pattern [[example code](concurrency/channels/example1/example1.go)]
+- Cancellation Pattern [[example code](concurrency/channels/example1/example1.go)]
 
 #### Lesson 11: Concurreny Patterns
 
