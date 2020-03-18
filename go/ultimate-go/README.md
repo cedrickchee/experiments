@@ -207,7 +207,7 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 11: Concurreny Patterns
 
-- Context [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/packages/context/README.md) | [notes](concurrency/channels/README.md)]
+- Context [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/packages/context/README.md) | [notes](concurrency/channels/README.md) | [exercise 4 solution](concurrency/context/exercise1/exercise1.go)]
   - Store / Retrieve context values [[example code](concurrency/context/example1/example1.go)]
   - WithTimeout [[example code](concurrency/context/example4/example4.go)]
   - Request/Response Context Timeout [[example code](concurrency/context/example5/example5.go)]
