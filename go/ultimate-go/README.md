@@ -207,14 +207,13 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 11: Concurreny Patterns
 
-- Context
-  - Store / Retrieve context values
-  - WithCancel
-  - WithDeadline
-  - WithTimeout
-  - Request/Response
-- Cancellation Pattern
-- Failure Detection
+- Context [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/packages/context/README.md) | [notes](concurrency/channels/README.md)]
+  - Store / Retrieve context values [[example code](concurrency/context/example1/example1.go)]
+  - WithTimeout [[example code](concurrency/context/example4/example4.go)]
+  - Request/Response Context Timeout [[example code](concurrency/context/example5/example5.go)]
+  - WithCancel [[example code](concurrency/context/example2/example2.go)]
+  - WithDeadline [[example code](concurrency/context/example3/example3.go)]
+- Failure Detection [[example code](concurrency/patterns/advanced/main.go)]
 
 ### Testing and Profiling
 
