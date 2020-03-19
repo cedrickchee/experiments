@@ -221,11 +221,12 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 12: Testing
 
-- Basic Unit Testing
-- Table Unit Testing
-- Mocking Server
-- Testing Internal Endpoints
-- Sub Tests
+- Testing [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/testing/tests/README.md) | [notes](testing/tests/README.md)]
+- Basic Unit Testing [[example code](testing/tests/example1/example1_test.go)]
+- Table Unit Testing [[example code](testing/tests/example2/example2_test.go)]
+- Mocking Server [[example code](testing/tests/example3/example3_test.go)]
+- Testing Internal Endpoints [[example code](testing/tests/example4/handlers/handlers_test.go)]
+- Sub Tests [[example code](testing/tests/example5/example5_test.go)]
 - Code Coverage
 
 #### Lesson 13: Benchmarking
