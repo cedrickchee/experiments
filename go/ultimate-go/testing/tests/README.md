@@ -410,7 +410,7 @@ to test it as well without manually having to stand up our own server.
 
 The Go standard library HTTP test package supports this.
 
-Below is a [basic code to build a non-production level web API](example4/handlers/handlers_test.go).
+Below is a [basic code to build a non-production level web API](example4/example4.go).
 
 ```go
 package main
@@ -496,7 +496,7 @@ You've just hit that endpoint.
 Below is how to test the execution of an internal endpoint without having to
 stand up the server.
 
-[Example test for handlers](example4/handlers/handlers.go).
+[Example test for handlers](example4/handlers/handlers_test.go).
 
 ```go
 package handlers_test
