@@ -247,3 +247,8 @@ This project contains the [training class material](https://github.com/ardanlabs
   - Part 3: Tooling Changes
   - Part 4: CPU Profiling
 - Execution Tracing
+
+#### Extra Lesson
+
+- Advanced Performance and Benchmarking [[docs](testing/benchmarks/README.md#advanced-performance)]
+- Fuzzing [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/testing/fuzzing/README.md)]
