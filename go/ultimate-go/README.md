@@ -231,9 +231,10 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 13: Benchmarking
 
-- Basic Benchmarking
-- Sub Benchmarks
-- Validate Benchmarks
+- Benchmarking [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/testing/benchmarks/README.md) | [notes](testing/benchmarks/README.md)]
+- Basic Benchmarking [[example code](testing/benchmarks/basic/basic_test.go)]
+- Sub Benchmarks [[example code](testing/benchmarks/sub/sub_test.go)]
+- Validate Benchmarks [[example code](testing/benchmarks/validate/validate_test.go)]
 
 #### Lesson 14: Profiling and Tracing
 
