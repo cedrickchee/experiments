@@ -16,40 +16,51 @@ import (
 	"testing"
 )
 
-var fs string
+var gs string
 
-// BenchmarkSprintf provides performance numbers for the fmt.Sprintf function
+// BenchmarkSprintf provides performance numbers for the fmt.Sprintf function.
 func BenchmarkSprintf(b *testing.B) {
-	number := 10
+	number := 6
 	var s string
 
 	for i := 0; i < b.N; i++ {
 		s = fmt.Sprintf("%d", number)
 	}
 
-	fs = s
+	gs = s
 }
 
-// BenchmarkFormat provides performance numbers for the strconv.FormatInt function
+// BenchmarkFormat provides performance numbers for the strconv.FormatInt function.
 func BenchmarkFormat(b *testing.B) {
-	number := int64(10)
+	number := int64(6)
 	var s string
 
 	for i := 0; i < b.N; i++ {
 		s = strconv.FormatInt(number, 10)
 	}
 
-	fs = s
+	gs = s
 }
 
-// BenchmarkItoa provides performance numbers for the strconv.Itoa function
+// BenchmarkItoa provides performance numbers for the strconv.Itoa function.
 func BenchmarkItoa(b *testing.B) {
-	number := 10
+	number := 6
 	var s string
 
 	for i := 0; i < b.N; i++ {
 		s = strconv.Itoa(number)
 	}
 
-	fs = s
+	gs = s
 }
+
+// Output:
+// $ go test -run none -bench . -benchtime 3s -benchmem
+// goos: linux
+// goarch: amd64
+// pkg: github.com/cedrickchee/ultimate-go/testing/benchmarks/exercises/exercise1
+// BenchmarkSprintf-4      33091200               104 ns/op               8 B/op          1 allocs/op
+// BenchmarkFormat-4       896546001                3.93 ns/op            0 B/op          0 allocs/op
+// BenchmarkItoa-4         856785422                3.98 ns/op            0 B/op          0 allocs/op
+// PASS
+// ok      github.com/cedrickchee/ultimate-go/testing/benchmarks/exercises/exercise1       11.313s

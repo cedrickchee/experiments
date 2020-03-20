@@ -231,7 +231,7 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 13: Benchmarking
 
-- Benchmarking [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/testing/benchmarks/README.md) | [notes](testing/benchmarks/README.md)]
+- Benchmarking [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/testing/benchmarks/README.md) | [notes](testing/benchmarks/README.md) | [exercise 1 solution](testing/benchmarks/exercises/exercise1/bench_test.go)]
 - Basic Benchmarking [[example code](testing/benchmarks/basic/basic_test.go)]
 - Sub Benchmarks [[example code](testing/benchmarks/sub/sub_test.go)]
 - Validate Benchmarks [[example code](testing/benchmarks/validate/validate_test.go)]
