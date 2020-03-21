@@ -238,7 +238,7 @@ This project contains the [training class material](https://github.com/ardanlabs
 
 #### Lesson 14: Profiling and Tracing
 
-- Profiling Guidelines
+- Profiling Guidelines [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/profiling/README.md) | [notes](profiling/README.md)]
 - Stack Traces
 - Micro Level Optimization
 - Macro Level Optimization
