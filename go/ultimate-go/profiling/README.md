@@ -783,11 +783,463 @@ gc 10 @2.592s 0%: 0.003+11+0.045 ms clock, 0.031+0/5.9/5.2+0.36 ms cpu, 499->499
 
 #### Macro Level Optimization: Memory Profiling
 
+Go makes it very easy for us to get a memory profile out of a running Go program.
+
+I will show you that with a production level project.
+
+[Sample code from service repo](https://github.com/ardanlabs/service/blob/master/cmd/sales-api/main.go)
+
+```go
+import _ "net/http/pprof" // Register the pprof handlers
+
+// ... truncated for brevity ...
+
+func run() error {
+    // ... truncated for brevity ...
+
+    // =========================================================================
+	// Start Debug Service
+	//
+	// /debug/pprof - Added to the default mux by importing the net/http/pprof package.
+	// /debug/vars - Added to the default mux by importing the expvar package.
+	//
+	// Not concerned with shutting this down when the application is shutdown.
+
+	log.Println("main : Started : Initializing debugging support")
+
+	go func() {
+		log.Printf("main : Debug Listening %s", cfg.Web.DebugHost)
+		log.Printf("main : Debug Listener closed : %v", http.ListenAndServe(cfg.Web.DebugHost, http.DefaultServeMux))
+    }()
+
+    // ... truncated for brevity ...
+}
+```
+
+What we're going to do is bind the `DefaultServeMux` to a localhost port and
+using `ListenAndServe` to host the `DefaultServeMux` on that port. What's going
+to happen is this, all I've got to do is import pprof `import _ "net/http/pprof"`.
+By using the blank identifier `_`, what this means is, "hey, there's an init
+function in here that is binding a route to the `DefaultServerMux`". So when I
+bind it, I'm going to have some routes that give me back CPU and memory
+profiles. I get this all for free.
+
+Let's profile the web service. The following steps are based on this [guide](project/README.md).
+
+```sh
+~/m/dev/work/repo/experiments/go/ultimate-go/profiling/project
+$ go build
+# $ ./project
+# 2020/03/21 22:20:29.259919 service.go:64: Listening on: 0.0.0.0:5000
+# Open this URL in your browser: http://localhost:5000/search
+
+# GC trace
+$ GODEBUG=gctrace=1 ./project > /dev/null
+gc 1 @9.761s 0%: 0.017+1.2+0.008 ms clock, 0.068+1.2/0.79/1.5+0.032 ms cpu, 4->4->1 MB, 5 MB goal, 4 P
+gc 2 @9.784s 0%: 0.013+2.4+0.011 ms clock, 0.054+0.36/2.1/0.31+0.047 ms cpu, 4->4->1 MB, 5 MB goal, 4 P
+...
+
+# Adding load
+$ hey -m POST -c 100 -n 10000 "http://localhost:5000/search?term=covid-19&cnn=on&bbc=on&nyt=on"
+
+Summary:
+  Total:	23.1709 secs
+  Slowest:	2.1538 secs
+  Fastest:	0.0023 secs
+  Average:	0.2092 secs
+  Requests/sec:	431.5751
+
+Response time histogram:
+  0.002 [1]	|
+  0.217 [6677]	|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+  0.433 [1457]	|■■■■■■■■■
+  0.648 [916]	|■■■■■
+  0.863 [527]	|■■■
+  1.078 [237]	|■
+  1.293 [103]	|■
+  1.508 [54]	|
+  1.723 [18]	|
+  1.939 [8]	|
+  2.154 [2]	|
+
+
+Latency distribution:
+  10% in 0.0057 secs
+  25% in 0.0110 secs
+  50% in 0.0410 secs
+  75% in 0.3295 secs
+  90% in 0.6346 secs
+  95% in 0.8231 secs
+  99% in 1.2317 secs
+
+Details (average, fastest, slowest):
+  DNS+dialup:	0.0001 secs, 0.0023 secs, 2.1538 secs
+  DNS-lookup:	0.0000 secs, 0.0000 secs, 0.0240 secs
+  req write:	0.0001 secs, 0.0000 secs, 0.0164 secs
+  resp wait:	0.2081 secs, 0.0020 secs, 2.1536 secs
+  resp read:	0.0009 secs, 0.0000 secs, 0.0504 secs
+
+Status code distribution:
+  [200]	10000 responses
+```
+
+```sh
+$ GODEBUG=gctrace=1 ./project > /dev/null
+...
+gc 732 @354.731s 1%: 8.0+28+2.5 ms clock, 32+2.4/18/0+10 ms cpu, 7->10->5 MB, 9 MB goal, 4 P
+gc 733 @354.780s 1%: 0.21+37+0.025 ms clock, 0.87+1.9/6.2/9.4+0.10 ms cpu, 8->13->7 MB, 11 MB goal, 4 P
+```
+
+We know that we're running at 431 requests a second, which took us a total of
+733 garbage collections, to make that happen.
+
+##### PPROF
+
+**Raw http/pprof**
+
+Look at the basic profiling stats from the new endpoint:
+
+    http://localhost:5000/debug/pprof/
+
+```
+debug/pprof/
+
+Types of profiles available:
+Count	Profile
+198	allocs
+0	block
+0	cmdline
+8	goroutine
+198	heap
+0	mutex
+0	profile
+18	threadcreate
+0	trace
+full goroutine stack dump
+
+Profile Descriptions:
+
+    - allocs: A sampling of all past memory allocations
+    - block: Stack traces that led to blocking on synchronization primitives
+    - cmdline: The command line invocation of the current program
+    - goroutine: Stack traces of all current goroutines
+    - heap: A sampling of memory allocations of live objects. You can specify the gc GET parameter to run GC before taking the heap sample.
+    ... ... truncated ... ...
+```
+
+Capture allocs profile:
+
+    http://localhost:5000/debug/pprof/allocs?debug=1
+
+```
+// these are raw heap data
+
+heap profile: 2: 5504 [8740: 73829968] @ heap/1048576
+1: 4096 [1: 4096] @ 0x4332ab 0x43a1e7 0x45d5ff 0x45e316 0x4350a0
+#	0x4332aa	runtime.allgadd+0xda		/usr/local/go/src/runtime/proc.go:471
+#	0x43a1e6	runtime.newproc1+0x486		/usr/local/go/src/runtime/proc.go:3287
+#	0x45d5fe	runtime.newproc.func1+0x4e	/usr/local/go/src/runtime/proc.go:3256
+#	0x45e315	runtime.systemstack+0x65	/usr/local/go/src/runtime/asm_amd64.s:370
+#	0x4350a0	runtime.mstart+0x0		/usr/local/go/src/runtime/proc.go:1146
+
+1: 1408 [1: 1408] @ 0x5f2cf2 0x5f5088 0x5e7eff 0x5e97e7 0x5e9196 0x46ebb3 0x5edb75 0x5edaac 0x5edabb 0x61f408 0x61d6f7 0x61bc2b 0x61a30a 0x6188fb 0x6ffa32 0x460371
+#	0x5f2cf1	crypto/x509.parseCertificate+0x41				/usr/local/go/src/crypto/x509/x509.go:1388
+#	0x5f5087	crypto/x509.ParseCertificate+0xf7				/usr/local/go/src/crypto/x509/x509.go:1621
+#	0x5e7efe	crypto/x509.(*CertPool).AppendCertsFromPEM+0xee			/usr/local/go/src/crypto/x509/cert_pool.go:139
+#	0x5e97e6	crypto/x509.loadSystemRoots+0x5b6				/usr/local/go/src/crypto/x509/root_unix.go:51
+#	0x5e9195	crypto/x509.initSystemRoots+0x25				/usr/local/go/src/crypto/x509/root.go:21
+#	0x46ebb2	sync.(*Once).doSlow+0xe2					/usr/local/go/src/sync/once.go:66
+... ... truncated ... ...
+```
+
+Capture heap profile:
+
+	http://localhost:5000/debug/pprof/heap
+
+Capture cpu profile:
+
+	http://localhost:5000/debug/pprof/profile
+
+
+**Interactive Profiling**
+
+Run the Go pprof tool in another window or tab to review alloc space heap
+information.
+
+```sh
+$ go tool pprof -alloc_space http://localhost:5000/debug/pprof/allocs
+
+Fetching profile over HTTP from http://localhost:5000/debug/pprof/allocs
+Saved profile in /home/cedric/pprof/pprof.project.alloc_objects.alloc_space.inuse_objects.inuse_space.001.pb.gz
+File: project
+Type: alloc_space
+Time: Mar 21, 2020 at 11:07pm (+08)
+Entering interactive mode (type "help" for commands, "o" for options)
+```
+
+The following give me the top 40 functions, cumulative.
+
+```sh
+(pprof) top 40 -cum
+Showing nodes accounting for 4242.38MB, 96.30% of 4405.46MB total
+Dropped 117 nodes (cum <= 22.03MB)
+Showing top 40 nodes out of 49
+      flat  flat%   sum%        cum   cum%
+   31.01MB   0.7%   0.7%  2392.07MB 54.30%  github.com/cedrickchee/ultimate-go/profiling/project/search.rssSearch
+         0     0%   0.7%  2357.53MB 53.51%  strings.(*Builder).Grow
+ 2357.53MB 53.51% 54.22%  2357.53MB 53.51%  strings.(*Builder).grow
+         0     0% 54.22%  2357.53MB 53.51%  strings.ToLower
+   11.51MB  0.26% 54.48%  1982.51MB 45.00%  github.com/cedrickchee/ultimate-go/profiling/project/search.CNN.Search
+         0     0% 54.48%  1982.25MB 45.00%  net/http.(*conn).serve
+  189.15MB  4.29% 58.77%  1965.74MB 44.62%  github.com/cedrickchee/ultimate-go/profiling/project/service.handler
+         0     0% 58.77%  1965.74MB 44.62%  github.com/braintree/manners.(*gracefulHandler).ServeHTTP
+         0     0% 58.77%  1965.74MB 44.62%  net/http.(*ServeMux).ServeHTTP
+         0     0% 58.77%  1965.74MB 44.62%  net/http.HandlerFunc.ServeHTTP
+         0     0% 58.77%  1965.74MB 44.62%  net/http.serverHandler.ServeHTTP
+  409.93MB  9.30% 68.08%  1743.05MB 39.57%  github.com/cedrickchee/ultimate-go/profiling/project/service.render
+       1MB 0.023% 68.10%  1333.12MB 30.26%  github.com/cedrickchee/ultimate-go/profiling/project/service.executeTemplate
+         0     0% 68.10%  1332.12MB 30.24%  html/template.(*Template).Execute
+         0     0% 68.10%  1332.12MB 30.24%  text/template.(*Template).Execute
+    2.50MB 0.057% 68.16%  1332.12MB 30.24%  text/template.(*Template).execute
+         0     0% 68.16%  1329.62MB 30.18%  text/template.(*state).walk
+       3MB 0.068% 68.22%  1031.68MB 23.42%  bytes.(*Buffer).grow
+ 1028.68MB 23.35% 91.57%  1028.68MB 23.35%  bytes.makeSlice
+         0     0% 91.57%  1016.56MB 23.07%  bytes.(*Buffer).Write
+         0     0% 91.57%   878.54MB 19.94%  fmt.Fprint
+         0     0% 91.57%   877.02MB 19.91%  text/template.(*state).printValue
+    1.50MB 0.034% 91.61%   812.48MB 18.44%  text/template.(*state).walkRange
+         0     0% 91.61%   807.98MB 18.34%  text/template.(*state).walkRange.func1
+         0     0% 91.61%   255.51MB  5.80%  text/template.(*state).evalPipeline
+         0     0% 91.61%   253.01MB  5.74%  text/template.(*state).evalCommand
+    0.50MB 0.011% 91.62%   228.55MB  5.19%  github.com/cedrickchee/ultimate-go/profiling/project/search.NYT.Search
+   30.50MB  0.69% 92.31%   214.51MB  4.87%  text/template.(*state).evalCall
+   10.50MB  0.24% 92.55%   203.52MB  4.62%  github.com/cedrickchee/ultimate-go/profiling/project/search.BBC.Search
+         0     0% 92.55%   196.01MB  4.45%  text/template.(*state).evalFunction
+         0     0% 92.55%   184.01MB  4.18%  reflect.Value.Call
+     108MB  2.45% 95.00%   184.01MB  4.18%  reflect.Value.call
+         0     0% 95.00%   184.01MB  4.18%  text/template.safeCall
+         0     0% 95.00%   103.08MB  2.34%  strings.Map
+   57.07MB  1.30% 96.30%    57.07MB  1.30%  fmt.(*buffer).writeString
+         0     0% 96.30%    57.07MB  1.30%  fmt.(*fmt).fmtS
+         0     0% 96.30%    57.07MB  1.30%  fmt.(*fmt).padString
+         0     0% 96.30%    57.07MB  1.30%  fmt.(*pp).doPrint
+         0     0% 96.30%    57.07MB  1.30%  fmt.(*pp).fmtString
+         0     0% 96.30%    57.07MB  1.30%  fmt.(*pp).printArg
+```
+
+I now have summed up at the cumulative level the top functions that are
+allocating in my program. If we look at this sort, this is what gets interesting
+to me, this line right here:
+
+`31.01MB   0.7%   0.7%  2392.07MB 54.30%  github.com/cedrickchee/ultimate-go/profiling/project/search.rssSearch`
+
+I see a piece of code that I wrote, `rssSearch`. You can see almost over 2392 MB
+of cumulative allocations we've had so far are coming from `rssSearch`. That's a
+clear indication that maybe we're over allocating here. Let's go ahead now and
+look at this code.
+
+Run this pprof command.
+
+```sh
+(pprof) list rssSearch
+
+Total: 4.30GB
+ROUTINE ======================== github.com/cedrickchee/ultimate-go/profiling/project/search.rssSearch in /home/cedric/m/dev/scratch/go/pkg/mod/github.com/cedrickchee/ultimate-go@v0.0.0-20200319163824-107c5eae164a/profiling/project/search/rss.go
+   31.01MB     2.34GB (flat, cum) 54.30% of Total
+         .          .     74:			fetch.m[uri] = mu
+         .          .     75:		}
+         .          .     76:	}
+         .          .     77:	fetch.Unlock()
+         .          .     78:
+   15.50MB    15.50MB     79:	var d Document
+         .          .     80:	mu.Lock()
+         .          .     81:	{
+         .          .     82:		// Look in the cache.
+         .          .     83:		v, found := cache.Get(uri)
+         .          .     84:
+         .          .     85:		// Based on the cache lookup determine what to do.
+         .          .     86:		switch {
+         .          .     87:		case found:
+         .          .     88:			d = v.(Document)
+         .          .     89:
+         .          .     90:		default:
+         .          .     91:
+         .          .     92:			// Pull down the rss feed.
+         .          .     93:			resp, err := http.Get(uri)
+         .          .     94:			if err != nil {
+         .          .     95:				return []Result{}, err
+         .          .     96:			}
+         .          .     97:
+         .          .     98:			// Schedule the close of the response body.
+         .          .     99:			defer resp.Body.Close()
+         .          .    100:
+         .          .    101:			// Decode the results into a document.
+         .     3.53MB    102:			if err := xml.NewDecoder(resp.Body).Decode(&d); err != nil {
+         .          .    103:				return []Result{}, err
+         .          .    104:			}
+         .          .    105:
+         .          .    106:			// Save this document into the cache.
+         .          .    107:			cache.Set(uri, d, expiration)
+         .          .    108:
+         .          .    109:			log.Println("reloaded cache", uri)
+         .          .    110:		}
+         .          .    111:	}
+         .          .    112:	mu.Unlock()
+         .          .    113:
+         .          .    114:	// Create an empty slice of results.
+         .          .    115:	results := []Result{}
+         .          .    116:
+         .          .    117:	// Capture the data we need for our results if we find the search term.
+         .          .    118:	for _, item := range d.Channel.Items {
+         .     2.30GB    119:		if strings.Contains(strings.ToLower(item.Description), strings.ToLower(term)) {
+   15.50MB    15.50MB    120:			results = append(results, Result{
+         .          .    121:				Engine:  engine,
+         .          .    122:				Title:   item.Title,
+         .          .    123:				Link:    item.Link,
+         .          .    124:				Content: item.Description,
+         .          .    125:			})
+```
+
+`         .     2.30GB    119:		if strings.Contains(strings.ToLower(item.Description), strings.ToLower(term)) {`
+
+The bulk of the allocations are coming from line 119. I see this call
+to `strings.Contains` and `strings.ToLower`. I don't want to guess which
+function it's coming out of. I can use the `web` command to get a visual call
+graph through web browser.
+
+```sh
+(pprof) web list rssSearch
+```
+
+`/temp/pprof001.svg`
+
+![](pprof_web_visual_call_graph.png)
+
+`ToLower` is our culprit here, because it is doing something with `strings.map`.
+
+Let's go back and look at our source code now.
+
+```go
+// project/search/rss.go
+
+// ... truncated ...
+
+// Create an empty slice of results.
+results := []Result{}
+
+// Capture the data we need for our results if we find the search term.
+for _, item := range d.Channel.Items {
+    if strings.Contains(strings.ToLower(item.Description), strings.ToLower(term)) {
+        results = append(results, Result{
+            Engine:  engine,
+            Title:   item.Title,
+            Link:    item.Link,
+            Content: item.Description,
+        })
+    }
+}
+
+// ... truncated ...
+```
+
+I start to understand why we have so many rogue allocations. Look at what this
+code is doing. When it's searching the RSS feeds for this description, it's
+trying to find the topic in this description, it is converting the description
+to lower case. That's going to be an allocation because strings are immutable.
+Every time we do this, we're causing an allocation and descriptions are large.
+These are not only a lot of allocations, they're large allocations.
+I'm also doing it on term.
+
+Let's fix this.
+
+```go
+	var d Document
+	mu.Lock()
+	{
+		// Look in the cache.
+		v, found := cache.Get(uri)
+
+		// Based on the cache lookup determine what to do.
+		switch {
+		case found:
+			d = v.(Document)
+
+		default:
+            // ... truncated ...
+
+			// Decode the results into a document.
+			if err := xml.NewDecoder(resp.Body).Decode(&d); err != nil {
+				return []Result{}, err
+			}
+
+            // FIX - added
+            for i := range d.Channel.Items {
+                d.Channel.Items[i].Description = strings.ToLower(d.Channel.Items[i].Description)
+            }
+
+			// Save this document into the cache.
+			cache.Set(uri, d, expiration)
+
+			log.Println("reloaded cache", uri)
+		}
+	}
+	mu.Unlock()
+
+	// Create an empty slice of results.
+    results := []Result{}
+
+    // FIX - added
+    term = strings.ToLower(term)
+
+	// Capture the data we need for our results if we find the search term.
+	for _, item := range d.Channel.Items {
+        // FIX - modified
+		if strings.Contains(item.Description, term) {
+			results = append(results, Result{
+				Engine:  engine,
+				Title:   item.Title,
+				Link:    item.Link,
+				Content: item.Description,
+			})
+		}
+	}
+```
+
+We've make everything `ToLower` before it gets into the cache. That means that
+all these extra allocations on the loop go away.
+
+```sh
+(pprof) exit
+
+# Build it
+$ go build
+
+# Run it again
+$ GODEBUG=gctrace=1 ./project > /dev/null
+gc 373 @477.504s 0%: 0.005+1.3+0.005 ms clock, 0.022+0/0.80/1.3+0.021 ms cpu, 1->1->1 MB, 4 MB goal, 4 P
+...
+
+# Run some load
+$ hey -m POST -c 100 -n 10000 "http://localhost:5000/search?term=covid-19&cnn=on&bbc=on&nyt=on"
+
+Summary:
+  Total:	23.1709 secs
+  Slowest:	2.1538 secs
+  Fastest:	0.0023 secs
+  Average:	0.2092 secs
+  Requests/sec:	431.5751
+...
+```
+
+We cut 50% of garbage collections and added 486 requests/sec out of this just
+through that fix that we made.
 
 
 
-Learn the basics of using memory and cpu profiling.
-[Memory and CPU Profiling](memcpu/README.md)
+
+
+
+[Memory Profiling guide](memcpu/README.md#memory-profiling)
 
 Learn the basics of using http/pprof.
 [pprof Profiling](pprof/README.md)
