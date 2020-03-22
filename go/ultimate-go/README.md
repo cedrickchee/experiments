@@ -239,14 +239,14 @@ This project contains the [training class material](https://github.com/ardanlabs
 #### Lesson 14: Profiling and Tracing
 
 - Profiling Guidelines [[docs](https://github.com/ardanlabs/gotraining/blob/master/topics/go/profiling/README.md) | [notes](profiling/README.md)]
-- Stack Traces
-- Micro Level Optimization
+- Stack Traces [[example 1 code](profiling/stack_trace/example1/example1.go) | [example 2 code](profiling/stack_trace/example2/example2.go) | [example 3 code](profiling/stack_trace/example3/example3.go)]
+- Micro Level Optimization using Benchmarks [[example code](profiling/memcpu/stream_test.go)]
 - Macro Level Optimization
-  - Part 1: GODEBUG Tracing
-  - Part 2: Memory Profiling
+  - Part 1: GODEBUG Tracing [[example 1 (web app) code](profiling/project/main.go) | [example 2 code](profiling/godebug/godebug.go)]
+  - Part 2: Memory Profiling [[example 1 (web app) code](profiling/project/main.go) | [example 2 code](profiling/pprof/pprof.go)]
   - Part 3: Tooling Changes
-  - Part 4: CPU Profiling
-- Execution Tracing
+  - Part 4: CPU Profiling [[example 1 (web app) code](profiling/project/main.go)]
+- Execution Tracing [[example code](profiling/trace/trace.go)]
 
 #### Extra Lesson
 
