@@ -513,7 +513,7 @@ We're looking for the low-hanging fruit.
 What I've done here is I've got a project already, which is web app, it has a
 whole browser-based front-end.
 
-[Profiling a Larger Web Service Guide](project/README.md) | [Web App Code](project/main.go)
+[Profiling a Larger Web Service/Real World App Guide](project/README.md) | [Web App Code](project/main.go)
 
 We plan to take this to production, but we want to get a general understanding
 if this is healthy and if there's anything that we maybe can fix in terms of
@@ -786,6 +786,8 @@ gc 10 @2.592s 0%: 0.003+11+0.045 ms clock, 0.031+0/5.9/5.2+0.36 ms cpu, 499->499
 Go makes it very easy for us to get a memory profile out of a running Go program.
 
 I will show you that with a production level project.
+
+[pprof profiling guide](pprof/README.md).
 
 [Sample code from service repo](https://github.com/ardanlabs/service/blob/master/cmd/sales-api/main.go)
 
@@ -1397,11 +1399,290 @@ The idea is that this profile endpoint is giving you the ability to take a
 running CPU snapshot of your server while it's running and we can start seeing,
 maybe, where are we running the longest.
 
+### Execution Tracing
 
-[Memory Profiling guide](memcpu/README.md#memory-profiling)
+[Basics of tracing guide](trace/README.md).
 
-Learn the basics of using http/pprof.
-[pprof Profiling](pprof/README.md)
+We will learn how to use the execution tracer to help to identify potential
+performance problems. A profiler is great. It can show you what's happening.
+But sometimes what you need to see is not what's happening but what's not
+happening and the tracer can give us both.
+
+We will use a simple program to learn how to navigate and read some of the
+tracing information you can find in the trace tool.
+
+What I wanted to do is write a function that entire purpose was to search a
+N number of RSS feed documents and find how many times a topic shows up in
+every document.
+
+[Sample program](trace/trace.go).
+
+Let's build it. Then I will use the time function to tell us how long it takes.
+
+```sh
+$ go build
+
+$ time ./trace
+2020/03/22 13:50:26 Searching 4000 files, found president 28000 times.
+
+real    0m5.158s
+user    0m5.668s
+sys     0m0.220s
+```
+
+Let's say that we know this isn't going to be fast enough and we want to make
+this run faster. We start leveraging our tooling again, our profiling. Let's see
+if the profiler can help us.
+
+#### Trace command
+
+You have two options with this code. First uncomment the CPU profile lines to
+generate a CPU profile.
+
+```go
+pprof.StartCPUProfile(os.Stdout)
+defer pprof.StopCPUProfile()
+
+// trace.Start(os.Stdout)
+// defer trace.Stop()
+```
+
+This will let you run a profile first. Leverage the lessons learned in the other
+sections.
+
+```sh
+$ time ./trace > p.out
+2020/03/22 14:02:51 Searching 4000 files, found president 28000 times.
+
+real    0m5.619s
+user    0m6.172s
+sys     0m0.204s
+```
+
+Notice that it took longer to run the program this time. That makes sense
+because a profile means that the program is hooked into the OS. The OS at
+regular intervals will interrupt or stop the program, collect those program
+counters, and start it all over again.
+
+```sh
+$ go tool pprof p.out
+
+File: trace
+Type: cpu
+Time: Mar 22, 2020 at 2:02pm (+08)
+Duration: 5.61s, Total samples = 6s (106.93%)
+Entering interactive mode (type "help" for commands, "o" for options)
+(pprof)
+```
+
+I already know about 'freq'. This is almost like a micro level optimization.
+
+```sh
+(pprof) list freq
+
+Total: 6s
+ROUTINE ======================== main.freq in /home/cedric/m/dev/work/repo/experiments/go/ultimate-go/profiling/trace/trace.go
+         0      5.06s (flat, cum) 84.33% of Total
+         .          .     63:
+         .          .     64:func freq(topic string, docs []string) int {
+         .          .     65:   var found int
+         .          .     66:
+         .          .     67:   for _, doc := range docs {
+         .       10ms     68:           file := fmt.Sprintf("%s.xml", doc[:8])
+         .       40ms     69:           f, err := os.OpenFile(file, os.O_RDONLY, 0)
+         .          .     70:           if err != nil {
+         .          .     71:                   log.Printf("Opening Document [%s] : ERROR : %v", doc, err)
+         .          .     72:                   return 0
+         .          .     73:           }
+         .          .     74:           defer f.Close()
+         .          .     75:
+         .      160ms     76:           data, err := ioutil.ReadAll(f)
+         .          .     77:           if err != nil {
+         .          .     78:                   log.Printf("Reading Document [%s] : ERROR : %v", doc, err)
+         .          .     79:                   return 0
+         .          .     80:           }
+         .          .     81:
+         .       30ms     82:           var d document
+         .      4.80s     83:           if err := xml.Unmarshal(data, &d); err != nil {
+         .          .     84:                   log.Printf("Decoding Document [%s] : ERROR : %v", doc, err)
+         .          .     85:                   return 0
+         .          .     86:           }
+         .          .     87:
+         .          .     88:           for _, item := range d.Channel.Items {
+         .          .     89:                   if strings.Contains(item.Title, topic) {
+         .          .     90:                           found++
+         .          .     91:                           continue
+         .          .     92:                   }
+         .          .     93:
+         .       10ms     94:                   if strings.Contains(item.Description, topic) {
+         .          .     95:                           found++
+         .          .     96:                   }
+         .          .     97:           }
+         .          .     98:   }
+         .          .     99:
+         .       10ms    100:   return found
+         .          .    101:}
+         .          .    102:
+         .          .    103:func freqConcurrent(topic string, docs []string) int {
+         .          .    104:   var found int32
+         .          .    105:
+```
+
+At the end of the day, we will learn, unfortunately, is that if I want to make
+my program run any faster, I need a new OS. The sys calls are killing me. So,
+this situation finally where the profiler is not helping us.
+
+Then run a trace by uncommenting the other lines of code.
+
+```go
+// pprof.StartCPUProfile(os.Stdout)
+// defer pprof.StopCPUProfile()
+
+trace.Start(os.Stdout)
+defer trace.Stop()
+```
+
+Run the program.
+
+```sh
+$ time ./trace > t.out
+2020/03/22 14:24:05 Searching 4000 files, found president 28000 times.
+
+real    0m5.444s
+user    0m6.048s
+sys     0m0.252s
+```
+
+Notice that our performance came back. It's tracing every single function call
+in and out down to the microsecond. There's a tremendous amount of data that's
+collected, but it's not slowing our program down significantly.
+
+Let's look at the trace.
+
+```sh
+$ go tool trace t.out
+
+2020/03/22 14:27:30 Parsing trace...
+2020/03/22 14:27:30 Splitting trace...
+2020/03/22 14:27:31 Opening browser. Trace viewer is listening on http://127.0.0.1:46264
+```
+
+Note: If you are using Go 1.13 with Chrome 80+, Go Trace Viewer cannot display
+traces anymore caused by deprecated WebComponents V0. Here's the GH Issue
+for this: https://github.com/golang/go/issues/34374
+
+Just from this trace view alone, we can see that goroutine got started right
+there. You could kind of see how GC can create a lot of chaos in your program.
+Notice that we can see where our performance problems are coming from, where the
+profiler couldn't tell us.
+
+![](go_trace_viewer.png)
+
+Where's our performance problems coming from? It's coming from the fact that
+we're only using one P (Proc) at a time. We didn't have a lot to stop-the-world
+time here. But if we could use the entire number of CPUs, all 8, this has to be
+able to run faster. That's our goal, to use the full CPU capacity for this
+problem only using one goroutine.
+
+**Optimize program**
+
+Let's make some code changes. The first things we can do is take a look at what
+our algorithm does and find a simple solution to getting worked on.
+
+I love trying to solve problems of one goroutine first, because it helps us
+understand what the workflow is. Then from there, we should be able to
+understand how to distribute the work.
+
+Technically what we could try first is a fan out pattern. Then from there, we
+will see if there's other optimization we want to make.
+
+Explore the trace tooling by building the program with these different find
+functions.
+
+**Fan out**
+
+```go
+// n := find(topic, docs)
+n := findConcurrent(topic, docs)
+// n := findConcurrentSem(topic, docs)
+// n := findNumCPU(topic, docs)
+// n := findActor(topic, docs)
+```
+
+Let's see what happens.
+
+```sh
+$ go build
+
+$ time ./trace > t.out
+2020/03/22 16:33:26 Searching 4000 files, found president 28000 times.
+
+real    0m3.518s
+user    0m10.960s
+sys     0m0.244s
+```
+
+Old trace:
+
+![](go_trace_viewer.png)
+
+New trace:
+
+![](go_trace_viewer_concurrent.png)
+
+This function worked. It wasn't complicated. But, I'm afraid, what if I want to
+process a million documents? That's a million goroutines. I don't think our
+algorithm will scale beyond a certain number of goroutines here. It will be too
+much for the system and scheduler. We need to find a way of using less
+goroutines to do this work, and maybe we'll get some better performance out of
+it as well, because less is always more.
+
+**8 goroutines**
+
+Since we only have 8 cores on the machine, let's only use 8 goroutines.
+
+```go
+// n := find(topic, docs)
+// n := findConcurrent(topic, docs)
+// n := findConcurrentSem(topic, docs)
+n := findNumCPU(topic, docs)
+// n := findActor(topic, docs)
+```
+
+Let's see what happens.
+
+```sh
+$ go build
+
+$ time ./trace > t.out
+2020/03/22 17:00:29 Searching 4000 files, found president 28000 times.
+
+real    0m2.867s
+user    0m9.272s
+sys     0m0.184s
+```
+
+New trace:
+
+![](go_trace_viewer_8_goroutines.png)
+
+It looks just as nice as the previous one. What's even better is, if I zoom in,
+it will be cleaner because we're only having to analyze those 8 goroutines.
+
+Now with the new tracing around regions and tasks, we could actually break down
+what anyone of those goroutines are doing. We can start to isolate what's
+happening on an individual goroutine level.
+
+Using this function allows you to see how to add custom tasks (`trace.NewTask()`)
+and regions (`trace.StartRegion()`). This requires Go version 1.11+
+
+```go
+n := findNumCPUTasks(topic, docs)
+```
+
+### Even More
+
+#### Basic Go Profiling
 
 Learn the basics of blocking profiling.
 [Blocking Profiling](blocking/README.md)
@@ -1409,22 +1690,18 @@ Learn the basics of blocking profiling.
 Learn the basics of mutex profiling.
 [Mutex Profiling](mutex/README.md)
 
-Learn the basics of tracing.
-[Tracing](trace/README.md)
-
-Learn the basics of profiling and tracing a larger application.
-[Real World Example](project/README.md)
-
-## Godoc Analysis
+#### Godoc Analysis
 
 The `godoc` tool can help you perform static analysis on your code.
 
-	// Perform a pointer analysis and then run the godoc website.
-	$ godoc -analysis pointer -http=:8080
+```sh
+// Perform a pointer analysis and then run the godoc website.
+$ godoc -analysis pointer -http=:8080
+```
 
-[Static analysis features of godoc](https://golang.org/lib/godoc/analysis/help.html) - Go Team
+[Static analysis features of Godoc](https://golang.org/lib/godoc/analysis/help.html) by Go Team.
 
-## HTTP Tracing
+#### HTTP Tracing
 
 HTTP tracing facilitate the gathering of fine-grained information throughout the lifecycle of an HTTP client request.
 
