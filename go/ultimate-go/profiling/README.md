@@ -1256,6 +1256,146 @@ If you use allocs instead, your default mode is now allocs space, obviously that
 could be also override from the command line, so this is all kind of new stuff
 that we have in Go 1.11 and above.
 
+#### Macro Level Optimization: CPU Profiling
+
+Now, we will get a CPU profile from our running Go program. This is a little
+different than the heap profiles because the heap data is historically there.
+When we're going to get a CPU profile, we actually have to be running load over
+it.
+
+The default amount of time a CPU profile wants to take to gather statistics on
+the running program is 30 seconds. You got to worry about whatever time outs you
+have on your endpoints. But we can adjust the seconds, I'm going to do that.
+
+So, I've got my program all ready running.
+
+```sh
+# Go 1.13: scvg information is spamming with GODEBUG=gctrace=1
+# GH ticket: https://github.com/golang/go/issues/32952
+# Temp workaround: "2> >(grep -v ^scvg)" suppress that using the redirect
+# operator and file descriptors
+~/m/dev/work/repo/experiments/go/ultimate-go/profiling/project
+$ GODEBUG=gctrace=1 ./project 2> >(grep -v ^scvg) > /dev/null
+```
+
+Put on some load:
+
+```sh
+$ hey -m POST -c 100 -n 1000000 "http://localhost:5000/search?term=covid-19&cnn=on&bbc=on&nyt=on"
+```
+
+Gather 10 seconds of profile data:
+
+```sh
+$ go tool pprof http://localhost:5000/debug/pprof/profile\?second\=10s
+Fetching profile over HTTP from http://localhost:5000/debug/pprof/profile?second=10s
+Saved profile in /home/cedric/pprof/pprof.project.samples.cpu.001.pb.gz
+File: project
+Type: cpu
+Time: Mar 22, 2020 at 12:56pm (+08)
+Duration: 30.21s, Total samples = 48.22s (159.64%)
+Entering interactive mode (type "help" for commands, "o" for options)
+(pprof)
+```
+
+I had enough load going through this. So, let's kill `hey`.
+
+```sh
+$ hey ...
+^C
+Summary:
+  Total:	56.5016 secs
+  Slowest:	1.0755 secs
+  Fastest:	0.0007 secs
+  Average:	0.0824 secs
+  Requests/sec:	1212.8869
+```
+
+Then, I can do the same things I did before,
+"give me the top 40 cumulative functions that are taking the longest to run".
+
+```sh
+(pprof) top 40 -cum
+
+Showing nodes accounting for 17.92s, 37.16% of 48.22s total
+Dropped 553 nodes (cum <= 0.24s)
+Showing top 40 nodes out of 185
+      flat  flat%   sum%        cum   cum%
+     0.01s 0.021% 0.021%     26.94s 55.87%  net/http.(*conn).serve
+     0.02s 0.041% 0.062%     23.46s 48.65%  net/http.serverHandler.ServeHTTP
+     0.02s 0.041%   0.1%     23.44s 48.61%  github.com/braintree/manners.(*gracefulHandler).ServeHTTP
+     0.02s 0.041%  0.15%     23.42s 48.57%  net/http.(*ServeMux).ServeHTTP
+     0.05s   0.1%  0.25%     23.31s 48.34%  github.com/cedrickchee/ultimate-go/profiling/project/service.handler
+         0     0%  0.25%     23.31s 48.34%  net/http.HandlerFunc.ServeHTTP
+         0     0%  0.25%     17.88s 37.08%  github.com/cedrickchee/ultimate-go/profiling/project/service.render
+     0.03s 0.062%  0.31%     16.93s 35.11%  github.com/cedrickchee/ultimate-go/profiling/project/service.executeTemplate
+         0     0%  0.31%     16.86s 34.96%  html/template.(*Template).Execute
+     0.01s 0.021%  0.33%     16.81s 34.86%  text/template.(*Template).Execute
+     0.02s 0.041%  0.37%     16.80s 34.84%  text/template.(*Template).execute
+     0.24s   0.5%  0.87%     16.77s 34.78%  text/template.(*state).walk
+     0.03s 0.062%  0.93%     14.43s 29.93%  text/template.(*state).walkRange
+     0.01s 0.021%  0.95%     14.01s 29.05%  text/template.(*state).walkRange.func1
+     0.21s  0.44%  1.39%     13.33s 27.64%  github.com/cedrickchee/ultimate-go/profiling/project/search.rssSearch
+     0.28s  0.58%  1.97%     12.73s 26.40%  text/template.(*state).evalPipeline
+     0.28s  0.58%  2.55%     12.37s 25.65%  text/template.(*state).evalCommand
+     0.06s  0.12%  2.68%     10.05s 20.84%  runtime.systemstack
+     1.30s  2.70%  5.37%      9.84s 20.41%  runtime.mallocgc
+     0.05s   0.1%  5.47%      9.74s 20.20%  strings.Contains
+     3.36s  6.97% 12.44%      9.70s 20.12%  strings.Index
+     0.02s 0.041% 12.48%      9.15s 18.98%  github.com/cedrickchee/ultimate-go/profiling/project/search.CNN.Search
+     0.33s  0.68% 13.17%      8.71s 18.06%  text/template.(*state).evalCall
+     0.10s  0.21% 13.38%      8.25s 17.11%  text/template.(*state).evalFunction
+     0.07s  0.15% 13.52%      7.17s 14.87%  text/template.safeCall
+     0.12s  0.25% 13.77%      6.72s 13.94%  reflect.Value.Call
+     0.64s  1.33% 15.10%      6.59s 13.67%  reflect.Value.call
+     0.08s  0.17% 15.26%      6.50s 13.48%  fmt.Fprint
+     0.32s  0.66% 15.93%      5.61s 11.63%  strings.IndexByte
+     4.96s 10.29% 26.21%      5.10s 10.58%  syscall.Syscall
+     5.04s 10.45% 36.67%      5.04s 10.45%  indexbytebody
+     0.14s  0.29% 36.96%      4.57s  9.48%  runtime.newobject
+     0.01s 0.021% 36.98%      4.45s  9.23%  net/http.checkConnErrorWriter.Write
+         0     0% 36.98%      4.44s  9.21%  net.(*conn).Write
+     0.04s 0.083% 37.06%      4.44s  9.21%  net.(*netFD).Write
+     0.02s 0.041% 37.10%      4.40s  9.12%  internal/poll.(*FD).Write
+         0     0% 37.10%      4.31s  8.94%  syscall.Write
+     0.02s 0.041% 37.14%      4.31s  8.94%  syscall.write
+         0     0% 37.14%      4.26s  8.83%  runtime.gcBgMarkWorker
+     0.01s 0.021% 37.16%         4s  8.30%  runtime.gcBgMarkWorker.func2
+```
+
+I don't really see anything other than standard library stuff, because this
+program looks like it's running pretty efficiently.
+
+You can always say, 'list ...'. Example:
+
+```sh
+(pprof) list executeTemplate
+
+Total: 48.22s
+ROUTINE ======================== github.com/cedrickchee/ultimate-go/profiling/project/service.executeTemplate in /home/cedric/m/dev/work/repo/experiments/go/ultimate-go/profiling/project/service/templates.go
+      30ms     16.93s (flat, cum) 35.11% of Total
+         .          .     46:	views[name] = tmpl
+         .          .     47:}
+         .          .     48:
+         .          .     49:// executeTemplate executes the specified template with the specified variables.
+         .          .     50:func executeTemplate(name string, vars map[string]interface{}) []byte {
+         .       30ms     51:	markup := new(bytes.Buffer)
+      10ms     16.88s     52:	if err := views[name].Execute(markup, vars); err != nil {
+         .          .     53:		log.Println(err)
+         .          .     54:		return []byte("Error Processing Template")
+         .          .     55:	}
+         .          .     56:
+      20ms       20ms     57:	return markup.Bytes()
+         .          .     58:}
+```
+
+You can see where that 16.XX seconds being spent.
+`views[name].Execute(markup, vars)`: this is standard library stuff. I don't
+particularly care about that.
+
+The idea is that this profile endpoint is giving you the ability to take a
+running CPU snapshot of your server while it's running and we can start seeing,
+maybe, where are we running the longest.
 
 
 [Memory Profiling guide](memcpu/README.md#memory-profiling)
