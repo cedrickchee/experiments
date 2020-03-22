@@ -1235,7 +1235,26 @@ We cut 50% of garbage collections and added 486 requests/sec out of this just
 through that fix that we made.
 
 
+#### Macro Level Optimization: Tooling Changes
 
+At least in 1.11 you now have two distinct endpoint for looking at memory
+allocations.
+
+You have the traditional heap endpoint:
+
+    http://localhost:5000/debug/pprof/heap
+
+and you have the traditional, now the new allocs:
+
+    http://localhost:5000/debug/pprof/allocs
+
+So the heap is the traditional one, allocs is the new, the only difference is
+what default mode the tool profile goes into.
+If you go ahead and use heap, your default mode is in 'use space', you can
+override it on the command line.
+If you use allocs instead, your default mode is now allocs space, obviously that
+could be also override from the command line, so this is all kind of new stuff
+that we have in Go 1.11 and above.
 
 
 
