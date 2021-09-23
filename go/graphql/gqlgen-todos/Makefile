@@ -5,6 +5,6 @@ generate:
 	go generate ./...
 
 run/server:
-	@go run server.go
+	@go run cmd/todo/*
 
 .PHONY: default generate run/server
