@@ -1,0 +1,6 @@
+zig-cache/
+zig-out/
+junk_file.txt
+junk_file2.txt
+tiny-hello
+*.exe
