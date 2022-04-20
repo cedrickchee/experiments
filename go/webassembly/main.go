@@ -31,4 +31,29 @@ func main() {
 
 	js.Global().Call("updateDOM", "Hello from Go")
 	js.Global().Call("showValues")
+
+	// Set up a recurring timer event to call updateTime() every 500 ms.
+
+	// Create JS callback connected to updateTime()
+	timerCallback := js.FuncOf(updateTime)
+	// Set timer to call timerCallback() every 500 ms.
+	js.Global().Call("setInterval", timerCallback, "500")
+
+	// An empty select blocks, so the main() function will never exit.
+	// This allows the event handler callbacks to continue operating.
+	select {}
+}
+
+// Callback for the interval timer.
+// Get the current time and update it in the DOM.
+func updateTime(this js.Value, args []js.Value) interface{} {
+	// fmt.Println("Hello ", val[0])
+
+	// Get the current date in this locale
+	date := js.Global().Get("Date").New()
+	s := date.Call("toLocaleTimeString").String()
+
+	// Update the text in <div id="clock">
+	js.Global().Get("document").Call("getElementById", "clock").Set("textContent", s)
+	return nil
 }

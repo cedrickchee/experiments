@@ -175,9 +175,42 @@ func main() {
 	obj := js.Global().Get("JSON").Call("parse", string(p))
 	js.Global().Set("aObject", obj)
 
-	js.Global().Call("updateDOM", "Hello from Go 2")
+	js.Global().Call("updateDOM", "Hello from Go")
 }
 ```
+
+We can also use `Set` to bind these values to callbacks within Go, using the
+`NewCallback` method. Let’s say we want to set a method in JavaScript, bind it to
+a Go function and make it call a method when it’s called. We could do that like
+this:
+
+```go
+package main
+ 
+import (
+    "fmt"
+    "syscall/js"
+)
+ 
+func main() {
+	c := make(chan struct{}, 0)
+	js.Global().Set("sayHello", js.NewCallback(sayHello))
+	<-c
+}
+
+func sayHello(val []js.Value) {
+    fmt.Println("Hello ", val[0])
+}
+```
+
+Here we create a channel of length zero and then await values (which never
+arrive) keeping the program open. This allows the `sayHello` callback to get
+called. Assuming we had a button which calls the function entitled `sayHello`,
+this would, in turn, call the Go function with whatever argument gets passed in,
+printing the answer (i.e., ‘Hello, World’).
+
+_Note: This will no longer work with previous versions of Go because the
+function `js.NewCallback()` in 1.11 was replaced by [`js.FuncOf()`](https://pkg.go.dev/syscall/js#FuncOf) in 1.12._
 
 ## WebAssembly in Chrome
 
