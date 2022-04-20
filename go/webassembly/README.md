@@ -129,7 +129,55 @@ func main() {
 Here we use the `js.Global` function to get the global window scope. We call the
 global JavaScript function `updateDOM` by using `Call` method on the value
 returned from `js.Global`. We can also set values in JavaScript using the `Set`
-function.
+function. At the moment setting values works well with basic types but errors on
+types such as structs and slices. Here we’ll pass some basic values over to
+JavaScript, and show how you could use a simple workaround to marshal a struct
+into JSON by leveraging JavaScript’s `JSON.parse`.
+
+```go
+package main
+ 
+import (
+    "encoding/json"
+    "fmt"
+    "syscall/js"
+)
+ 
+type Person struct {
+    Name string `json:"name"`package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"syscall/js"
+)
+
+type Person struct {
+	Name string `json:"name"`
+	Age  int    `json:"age"`
+}
+
+func main() {
+	fmt.Println("Ohai, WebAssembly, wasm!")
+
+	js.Global().Set("aBoolean", true)
+	js.Global().Set("aString", "Hello from Go")
+	js.Global().Set("aNumber", 42)
+
+	// A simple workaround to marshal a struct into JSON by leveraging
+	// JavaScript's `JSON.parse`.
+	alice := &Person{Name: "Alice", Age: 19}
+	p, err := json.Marshal(alice)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	obj := js.Global().Get("JSON").Call("parse", string(p))
+	js.Global().Set("aObject", obj)
+
+	js.Global().Call("updateDOM", "Hello from Go 2")
+}
+```
 
 ## WebAssembly in Chrome
 
