@@ -73,3 +73,6 @@ typings/
 *.crt
 *.key
 *.pem
+
+# WebAssembly module file
+*.wasm
