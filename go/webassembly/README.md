@@ -212,6 +212,26 @@ printing the answer (i.e., ‘Hello, World’).
 _Note: This will no longer work with previous versions of Go because the
 function `js.NewCallback()` in 1.11 was replaced by [`js.FuncOf()`](https://pkg.go.dev/syscall/js#FuncOf) in 1.12._
 
+We can also use the `Get` method to retrieve a value from the JavaScript
+main-thread. For example, let’s say we wanted to get the URL of the current
+page. We could do that by doing the following:
+
+```go
+import (
+    "fmt"
+    "syscall/js"
+)
+ 
+func main() {
+    href := js.Global().Get("location").Get("href")
+    fmt.Println(href)
+}
+```
+
+Which would print out the webpage URL to the web console. We can extrapolate
+this to get hold of any global JavaScript object, like `document` or `navigator`
+for example.
+
 ## WebAssembly in Chrome
 
 If you run a newer version of Chrome there is a flag

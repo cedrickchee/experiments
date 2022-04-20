@@ -32,6 +32,10 @@ func main() {
 	js.Global().Call("updateDOM", "Hello from Go")
 	js.Global().Call("showValues")
 
+	// Retrieve a value from JS main thread.
+	href := js.Global().Get("location").Get("href")
+	fmt.Println(href)
+
 	// Set up a recurring timer event to call updateTime() every 500 ms.
 
 	// Create JS callback connected to updateTime()
