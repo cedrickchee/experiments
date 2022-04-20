@@ -101,6 +101,36 @@ ok  	example.org/my/pkg	0.800s
 
 See https://pkg.go.dev/syscall/js.
 
+You can call JavaScript from WASM using the `syscall/js` module. Let’s assume we
+have a function in JavaScript simply called `updateDOM` that looks like this:
+
+```javascript
+function updateDOM(text) {
+    document.getElementById("wasm").innerText = text;
+}
+```
+
+All this function does is set the inner text of our main container to whatever
+gets passed to the function. We can then call this function from our Go code in
+the following fashion:
+
+```go
+package main
+ 
+import (
+    "syscall/js"
+)
+ 
+func main() {
+    js.Global().Call("updateDOM", "Hello, World")
+}
+```
+
+Here we use the `js.Global` function to get the global window scope. We call the
+global JavaScript function `updateDOM` by using `Call` method on the value
+returned from `js.Global`. We can also set values in JavaScript using the `Set`
+function.
+
 ## WebAssembly in Chrome
 
 If you run a newer version of Chrome there is a flag
