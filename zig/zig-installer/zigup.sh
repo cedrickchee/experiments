@@ -21,6 +21,7 @@ fi
 REPO="${TMPDIR}/zig-repo.json"
 
 mkdir -p "${TMPDIR}"
+touch "${ROOT}/zig-current"
 
 echo "Downloading repository..."
 
@@ -47,6 +48,9 @@ else
 		rm -rf "${ROOT}/${VERSION}"
 	fi
 fi
+
+# symlink
+ln -s "${ROOT}/zig-current/zig" ~/.local/bin
 
 echo "Current version is now: $(zig version)"
 
