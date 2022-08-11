@@ -9,6 +9,10 @@ The original code was written for older Zig version (may below 0.9.1).
 I'm using latest Zig version (master/0.10.0-dev.3414+4c750016e). Some code
 examples are broken due to that. I have fixed the broken examples and tested
 with this version.
+
+Also don't use `std.testing.allocator` outside of test cases. I have replaced it
+with `std.heap.GeneralPurposeAllocator`.
+
 ## Run Example
 
 Compile executable and run immediately.
