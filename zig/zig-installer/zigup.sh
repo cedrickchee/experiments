@@ -1,6 +1,6 @@
 #!/bin/bash
 
-ROOT=$HOME/scripts
+ROOT=$HOME/software
 REPO_URL=https://ziglang.org/download/index.json
 TMPDIR=/tmp/zig-update
 
