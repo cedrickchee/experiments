@@ -7,9 +7,11 @@ const std = @import("std");
 const stdout = std.io.getStdOut().writer();
 
 pub fn main() !void {
-    const args = try std.process.argsAlloc(std.testing.allocator);
-    defer std.process.argsFree(std.testing.allocator, args);
-    const dir = try std.fs.cwd().openDir(if (args.len < 2) "." else args[1], .{ .iterate = true });
+    var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
+    const gpa = general_purpose_allocator.allocator();
+    const args = try std.process.argsAlloc(gpa);
+    defer std.process.argsFree(gpa, args);
+    const dir = try std.fs.cwd().openIterableDir(if (args.len < 2) "." else args[1], .{});
     var dir_iterator = dir.iterate();
 
     // Iterate Over the Path's
