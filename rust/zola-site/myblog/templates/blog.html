@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1 class="title">
+  {{ section.title }}
+</h1>
+<ul>
+  <!-- If you are using pagination, section.pages will be empty. You need to use the paginator object -->
+  {% for post in section.pages %}
+  <li>
+    {{ post.date }} - <a href="{{ post.permalink | safe }}">{{ post.title }}</a><br />
+    {% if post.summary %}
+      {{ post.summary | safe }}
+      <a href="{{ post.permalink }}#continue-reading">Continue</a>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+
+{% endblock content %}

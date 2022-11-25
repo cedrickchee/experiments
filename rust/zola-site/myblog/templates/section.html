@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1 class="title">
+  {{ section.title }}
+</h1>
+
+<p>This is the default section template.</p>
+<hr />
+<p>An actual section content:</p>
+
+{{ section.content | safe }}
+
+{% endblock content %}

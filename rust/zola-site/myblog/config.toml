@@ -1,0 +1,34 @@
+# The URL the site will be built for
+base_url = "https://example.com"
+
+title = "Chi's Blog"
+
+# Whether to automatically compile all Sass files in the sass directory
+compile_sass = true
+
+# Whether to build a search index to be used later on by a JavaScript library
+build_search_index = false
+
+# When set to "true", a feed is automatically generated.
+generate_feed = true
+
+# The filename to use for the feed. Used as the template filename, too.
+# Defaults to "atom.xml", which has a built-in template that renders an Atom 1.0 feed.
+# There is also a built-in template "rss.xml" that renders an RSS 2.0 feed.
+feed_filename = "atom.xml"
+
+[markdown]
+# Whether to do syntax highlighting
+# Theme can be customised by setting the `highlight_theme` variable to a theme supported by Zola
+highlight_code = false
+
+[link_checker]
+
+# Treat internal link problems as either "error" or "warn", default is "error"
+internal_level = "error"
+
+[slugify]
+anchors = "on"
+
+[extra]
+# Put all your custom variables here

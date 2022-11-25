@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1 class="title">
+  This is my blog made with Zola.
+</h1>
+<p>Click <a href="{{ get_url(path='@/blog/_index.md') }}">here</a> to see my posts.</p>
+<p>Click <a href="{{ get_url(path='@/project/_index.md') }}">here</a> to see my projects.</p>
+
+<a href="{{ get_url(path='@/blog/_index.md') }}">Blog</a>&nbsp;|&nbsp;
+<a href="{{ get_url(path='@/project/_index.md') }}">Project</a>&nbsp;|&nbsp;
+<a href="{{ get_url(path='@/about/index.md') }}">About</a>&nbsp;|&nbsp;
+<a href="{{ get_url(path='@/contact.md') }}">Contact</a>
+
+<h5>Debugging info:</h5>
+
+<pre>
+  <code>
+  {{ __tera_context }}
+  </code>
+</pre>
+
+<ul>
+  {% for page in section.pages %}
+    <li>
+      {{ page.title }}
+    </li>
+  {% endfor %}
+
+  {% for section in section.subsections %}
+    <li>{{ section }}</li>
+  {% endfor %}
+</ul>
+
+Current URL: {{ current_url }}
+
+{% endblock content %}

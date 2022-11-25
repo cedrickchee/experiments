@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1 class="title">
+  {{ page.title }}
+</h1>
+<p class="subtitle">
+  <strong>{{ page.date }}</strong>
+  {% if page.updated %}<span>(updated: {{ page.updated }})</span>{% endif %}
+</p>
+
+{% if page.summary %}{{ page.summary }}{% endif %}
+{{ page.content | safe }}
+
+<h5>Debugging info:</h5>
+
+<pre>
+  <code>
+  {{ __tera_context }}
+  </code>
+</pre>
+
+{% endblock content %}
