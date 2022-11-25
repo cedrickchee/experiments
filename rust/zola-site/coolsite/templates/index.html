@@ -1,0 +1,41 @@
+{% extends "after-dark/templates/index.html" %}
+
+{% block content %}
+    {% block header %}
+        {{ super() }}
+    {% endblock header %}
+
+    <main>
+      {% if config.extra.after_dark_title %}
+          <header>
+              <h1>{{ config.extra.after_dark_title }}</h1>
+              <p>{{ config.extra.after_dark_description }}</p>
+          </header>
+      {% endif %}
+      {% for page in paginator.pages %}
+          {{ post_macros::page_in_list(page=page) }}
+      {% endfor %}
+
+      <nav>
+        <p>
+          {% if paginator.previous %}
+            <a href="{{ paginator.previous }}">&laquo; Previous</a> |
+          {% endif %}
+          <span>Page {{ paginator.current_index }} of {{ paginator.number_pagers }}</span>
+          {% if paginator.next %}
+            | <a href="{{ paginator.next }}">Next &raquo;</a>
+          {% endif %}
+        </p>
+      </nav>
+
+      {% block page_footer %}
+      <footer>
+          <hr>
+          {% block extra_footer %}
+          <a href="https://github.com/cedrickchee">GitHub</a> | <a href="https://twitter.com/cedric_chee">Twitter</a> | © 2016-2022 Chi
+          {% endblock extra_footer %}
+      </footer>
+  {% endblock page_footer %}
+      
+  </main>
+{% endblock content %}
