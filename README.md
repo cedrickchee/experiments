@@ -1,4 +1,6 @@
-# Experiments Repository
+# A Monorepo of My Experiments
+
+**tl;dr**: various experimental stuffs.
 
 ## Introduction
 
