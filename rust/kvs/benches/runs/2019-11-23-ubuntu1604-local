@@ -1,0 +1,63 @@
+$ cargo bench
+   Compiling kvs v0.1.0 (/home/cedric/m/dev/work/repo/fleurie/rust/projects/project-3-solution)
+    Finished release [optimized] target(s) in 9.41s
+     Running target/release/deps/kvs-38a750581b207942
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+     Running target/release/deps/kvs_client-4e9393cf98174188
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+     Running target/release/deps/kvs_server-61c940ad97144c41
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+     Running target/release/deps/engine_bench-ac683c4db17cfea6
+Benchmarking set_bench/kvs: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 41.0s or reduce sample count to 20
+set_bench/kvs           time:   [7.8716 ms 7.9550 ms 8.0537 ms]
+                        change: [-1.0919% +1.1012% +3.0440%] (p = 0.32 > 0.05)
+                        No change in performance detected.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Benchmarking set_bench/sled: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 162.7s or reduce sample count to 10
+set_bench/sled          time:   [27.889 ms 28.140 ms 28.453 ms]
+                        change: [-3.2250% -1.4500% +0.3523%] (p = 0.12 > 0.05)
+                        No change in performance detected.
+Found 9 outliers among 100 measurements (9.00%)
+  4 (4.00%) low mild
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+
+get_bench/kvs/8         time:   [3.2907 us 3.3653 us 3.4523 us]
+                        change: [+2.0088% +4.1671% +6.4666%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+get_bench/kvs/12        time:   [3.7486 us 3.8088 us 3.8738 us]
+                        change: [-4.3510% -1.8474% +0.5442%] (p = 0.16 > 0.05)
+                        No change in performance detected.
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+get_bench/sled/8        time:   [712.01 ns 727.22 ns 745.33 ns]
+                        change: [-4.5428% -0.5667% +3.4049%] (p = 0.78 > 0.05)
+                        No change in performance detected.
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+get_bench/sled/12       time:   [1.1022 us 1.1386 us 1.1787 us]
+                        change: [-0.0627% +4.1898% +8.9739%] (p = 0.05 > 0.05)
+                        No change in performance detected.
+Found 12 outliers among 100 measurements (12.00%)
+  10 (10.00%) high mild
+  2 (2.00%) high severe

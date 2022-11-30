@@ -1,0 +1,63 @@
+# Benchmarking Concurrent Reads with Writes
+
+$ cargo bench
+    Finished release [optimized] target(s) in 0.09s
+     Running target/release/deps/kvs-7df1df0baf764caa
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+     Running target/release/deps/kvs_client-685d25b596a83ced
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+     Running target/release/deps/kvs_server-bf291ac21a5a9938
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+     Running target/release/deps/engine_bench-79ce56e4c8461998
+Benchmarking set_bench/kvs: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 47.4s or reduce sample count to 20
+set_bench/kvs           time:   [9.2514 ms 9.3668 ms 9.5007 ms]
+                        change: [-2.4030% -0.6546% +1.4061%] (p = 0.51 > 0.05)
+                        No change in performance detected.
+Found 12 outliers among 100 measurements (12.00%)
+  6 (6.00%) high mild
+  6 (6.00%) high severe
+Benchmarking set_bench/sled: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 157.7s or reduce sample count to 10
+set_bench/sled          time:   [27.581 ms 27.754 ms 27.968 ms]
+                        change: [+2.1002% +3.5009% +4.8465%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 6 outliers among 100 measurements (6.00%)
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+
+get_bench/kvs/8         time:   [3.3807 us 3.4086 us 3.4383 us]
+                        change: [-6.8894% -4.8202% -2.7352%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 6 outliers among 100 measurements (6.00%)
+  6 (6.00%) high mild
+get_bench/kvs/12        time:   [3.9341 us 3.9723 us 4.0164 us]
+                        change: [-11.787% -8.6162% -5.3561%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) high mild
+  4 (4.00%) high severe
+get_bench/sled/8        time:   [683.27 ns 690.61 ns 698.94 ns]
+                        change: [-5.1617% -2.3920% +0.4589%] (p = 0.10 > 0.05)
+                        No change in performance detected.
+Found 11 outliers among 100 measurements (11.00%)
+  8 (8.00%) high mild
+  3 (3.00%) high severe
+get_bench/sled/12       time:   [1.0390 us 1.0546 us 1.0725 us]
+                        change: [-5.0064% -1.4752% +2.2703%] (p = 0.43 > 0.05)
+                        No change in performance detected.
+Found 8 outliers among 100 measurements (8.00%)
+  5 (5.00%) high mild
+  3 (3.00%) high severe
