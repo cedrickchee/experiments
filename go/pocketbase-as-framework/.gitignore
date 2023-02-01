@@ -1,0 +1,5 @@
+pb_data
+
+# ignore prebuilt PocketBase executable
+main
+pocketbase-as-framework
