@@ -1,0 +1,15 @@
+{
+  "name": "web",
+  "version": "0.0.1",
+  "description": "PocketBase Web client",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Cedric Chee",
+  "license": "MIT",
+  "dependencies": {
+    "pocketbase": "^0.10.1"
+  }
+}

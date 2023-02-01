@@ -1,0 +1,6 @@
+pb_data
+
+# ignore prebuilt PocketBase executable
+pocketbase
+
+node_modules
