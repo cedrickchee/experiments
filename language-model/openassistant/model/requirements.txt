@@ -1,0 +1,4 @@
+transformers
+bitsandbytes
+accelerate
+sanic==22.12.0
