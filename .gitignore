@@ -76,3 +76,8 @@ typings/
 
 # WebAssembly module file
 *.wasm
+
+# LLM artifacts
+language-model/**/cache/
+python/**/cache/
+python/llm/gpu/
