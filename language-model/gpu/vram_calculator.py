@@ -221,7 +221,7 @@ if __name__ == "__main__":
     parser.add_argument("-r", "--ram", type=int, default=48, help="Available VRAM in GB (default: 48)")
     parser.add_argument("-t", "--type", type=str, default="exl2", choices=["exl2", "gguf"],
                         help="Type of quantization [exl2, gguf] for BPW calculation (default: exl2)")
-    parser.add_argument("-f", "--fp8", action="store_true", help="Use FP8 KV cache (default: true)")
+    parser.add_argument("-f", "--fp8", action=argparse.BooleanOptionalAction, help="Use FP8 KV cache (default: false)")
     parser.add_argument("-a", "--access", type=str, default=None, help="Access token for Hugging Face API (optional)")
 
     args = parser.parse_args()
