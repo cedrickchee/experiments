@@ -59,6 +59,8 @@ pub fn main(init: std.process.Init) !void {
         stream_config,
         Oscillator.callback,
         &oscillator,
+        null,
+        null,
     );
     defer output_stream.deinit();
 

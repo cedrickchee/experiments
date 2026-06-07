@@ -13,7 +13,10 @@ pub const SupportedStreamConfig = config.SupportedStreamConfig;
 pub const SupportedStreamConfigRange = config.SupportedStreamConfigRange;
 pub const StreamInstant = stream.StreamInstant;
 pub const OutputCallbackInfo = stream.OutputCallbackInfo;
+pub const InputCallbackInfo = stream.InputCallbackInfo;
 pub const OutputCallbackF32 = stream.OutputCallbackF32;
+pub const InputCallbackF32 = stream.InputCallbackF32;
+pub const StreamErrorCallback = stream.StreamErrorCallback;
 
 pub const AudioError = error{
     BackendUnavailable,
@@ -118,6 +121,17 @@ pub const Device = union(HostId) {
         };
     }
 
+    pub fn supportedInputConfigs(
+        self: Device,
+        allocator: std.mem.Allocator,
+    ) AudioError![]SupportedStreamConfigRange {
+        return switch (self) {
+            .alsa => |device| device.supportedInputConfigs(allocator),
+            .coreaudio, .wasapi, .jack, .pulseaudio => |device| device.supportedInputConfigs(allocator),
+            .null => |device| device.supportedInputConfigs(allocator),
+        };
+    }
+
     pub fn defaultOutputConfig(self: Device) AudioError!SupportedStreamConfig {
         return switch (self) {
             .alsa => |device| device.defaultOutputConfig(),
@@ -126,16 +140,41 @@ pub const Device = union(HostId) {
         };
     }
 
+    pub fn defaultInputConfig(self: Device) AudioError!SupportedStreamConfig {
+        return switch (self) {
+            .alsa => |device| device.defaultInputConfig(),
+            .coreaudio, .wasapi, .jack, .pulseaudio => |device| device.defaultInputConfig(),
+            .null => |device| device.defaultInputConfig(),
+        };
+    }
+
     pub fn buildOutputStreamF32(
         self: Device,
         config_value: StreamConfig,
         callback: OutputCallbackF32,
         userdata: ?*anyopaque,
+        error_callback: ?StreamErrorCallback,
+        error_userdata: ?*anyopaque,
     ) AudioError!stream.Stream {
         return switch (self) {
-            .alsa => |device| .{ .alsa = try device.buildOutputStreamF32(config_value, callback, userdata) },
-            .coreaudio, .wasapi, .jack, .pulseaudio => |device| .{ .stub = try device.buildOutputStreamF32(config_value, callback, userdata) },
-            .null => |device| .{ .null = try device.buildOutputStreamF32(config_value, callback, userdata) },
+            .alsa => |device| .{ .alsa = try device.buildOutputStreamF32(config_value, callback, userdata, error_callback, error_userdata) },
+            .coreaudio, .wasapi, .jack, .pulseaudio => |device| .{ .stub = try device.buildOutputStreamF32(config_value, callback, userdata, error_callback, error_userdata) },
+            .null => |device| .{ .null = try device.buildOutputStreamF32(config_value, callback, userdata, error_callback, error_userdata) },
+        };
+    }
+
+    pub fn buildInputStreamF32(
+        self: Device,
+        config_value: StreamConfig,
+        callback: InputCallbackF32,
+        userdata: ?*anyopaque,
+        error_callback: ?StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) AudioError!stream.Stream {
+        return switch (self) {
+            .alsa => |device| .{ .alsa = try device.buildInputStreamF32(config_value, callback, userdata, error_callback, error_userdata) },
+            .coreaudio, .wasapi, .jack, .pulseaudio => |device| .{ .stub = try device.buildInputStreamF32(config_value, callback, userdata, error_callback, error_userdata) },
+            .null => |device| .{ .null = try device.buildInputStreamF32(config_value, callback, userdata, error_callback, error_userdata) },
         };
     }
 };
@@ -241,6 +280,17 @@ pub const Host = union(HostId) {
             .jack => |host| if (try host.defaultOutputDevice(allocator)) |device| .{ .jack = device } else null,
             .pulseaudio => |host| if (try host.defaultOutputDevice(allocator)) |device| .{ .pulseaudio = device } else null,
             .null => |host| if (try host.defaultOutputDevice(allocator)) |device| .{ .null = device } else null,
+        };
+    }
+
+    pub fn defaultInputDevice(self: Host, allocator: std.mem.Allocator) AudioError!?Device {
+        return switch (self) {
+            .alsa => |host| if (try host.defaultInputDevice(allocator)) |device| .{ .alsa = device } else null,
+            .coreaudio => |host| if (try host.defaultInputDevice(allocator)) |device| .{ .coreaudio = device } else null,
+            .wasapi => |host| if (try host.defaultInputDevice(allocator)) |device| .{ .wasapi = device } else null,
+            .jack => |host| if (try host.defaultInputDevice(allocator)) |device| .{ .jack = device } else null,
+            .pulseaudio => |host| if (try host.defaultInputDevice(allocator)) |device| .{ .pulseaudio = device } else null,
+            .null => |host| if (try host.defaultInputDevice(allocator)) |device| .{ .null = device } else null,
         };
     }
 };

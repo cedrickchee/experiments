@@ -29,6 +29,12 @@ pub const Host = struct {
         _ = self;
         return null;
     }
+
+    pub fn defaultInputDevice(self: Host, allocator: std.mem.Allocator) root.AudioError!?Device {
+        _ = allocator;
+        _ = self;
+        return null;
+    }
 };
 
 pub const DeviceList = struct {
@@ -69,7 +75,21 @@ pub const Device = struct {
         return root.AudioError.UnsupportedOperation;
     }
 
+    pub fn supportedInputConfigs(
+        self: Device,
+        allocator: std.mem.Allocator,
+    ) root.AudioError![]root.SupportedStreamConfigRange {
+        _ = allocator;
+        _ = self;
+        return root.AudioError.UnsupportedOperation;
+    }
+
     pub fn defaultOutputConfig(self: Device) root.AudioError!root.SupportedStreamConfig {
+        _ = self;
+        return root.AudioError.UnsupportedOperation;
+    }
+
+    pub fn defaultInputConfig(self: Device) root.AudioError!root.SupportedStreamConfig {
         _ = self;
         return root.AudioError.UnsupportedOperation;
     }
@@ -79,11 +99,32 @@ pub const Device = struct {
         config_value: root.StreamConfig,
         callback: root.OutputCallbackF32,
         userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
     ) root.AudioError!Stream {
         _ = self;
         _ = config_value;
         _ = callback;
         _ = userdata;
+        _ = error_callback;
+        _ = error_userdata;
+        return root.AudioError.UnsupportedOperation;
+    }
+
+    pub fn buildInputStreamF32(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.InputCallbackF32,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        _ = self;
+        _ = config_value;
+        _ = callback;
+        _ = userdata;
+        _ = error_callback;
+        _ = error_userdata;
         return root.AudioError.UnsupportedOperation;
     }
 };
@@ -95,6 +136,11 @@ pub const Stream = struct {
     }
 
     pub fn pause(self: *Stream) root.AudioError!void {
+        _ = self;
+        return root.AudioError.UnsupportedOperation;
+    }
+
+    pub fn bufferSize(self: *Stream) root.AudioError!u32 {
         _ = self;
         return root.AudioError.UnsupportedOperation;
     }

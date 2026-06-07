@@ -34,7 +34,7 @@ pub fn main(init: std.process.Init) !void {
     defer device.deinit(allocator);
 
     const config = (try device.defaultOutputConfig()).config();
-    var output_stream = try device.buildOutputStreamF32(config, silence, null);
+    var output_stream = try device.buildOutputStreamF32(config, silence, null, null, null);
     defer output_stream.deinit();
 
     try output_stream.play();

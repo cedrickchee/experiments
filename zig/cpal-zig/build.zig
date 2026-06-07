@@ -34,6 +34,8 @@ pub fn build(b: *std.Build) void {
         .{ .name = "print_stream_configs", .path = "examples/print_stream_configs.zig" },
         .{ .name = "open_output_stream", .path = "examples/open_output_stream.zig" },
         .{ .name = "sine_wave", .path = "examples/sine_wave.zig" },
+        .{ .name = "record_input", .path = "examples/record_input.zig" },
+        .{ .name = "input_output_feedback", .path = "examples/input_output_feedback.zig" },
     };
 
     inline for (examples) |example| {

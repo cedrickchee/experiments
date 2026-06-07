@@ -17,14 +17,20 @@ pub const Host = struct {
 
     pub fn devices(self: Host, allocator: std.mem.Allocator) root.AudioError!DeviceList {
         _ = self;
-        const items = try allocator.alloc(Device, 1);
-        items[0] = try Device.init(allocator, "null:default", "Null Output Device", .output);
+        const items = try allocator.alloc(Device, 2);
+        items[0] = try Device.init(allocator, "null:output", "Null Output Device", .output);
+        items[1] = try Device.init(allocator, "null:input", "Null Input Device", .input);
         return .{ .items = items };
     }
 
     pub fn defaultOutputDevice(self: Host, allocator: std.mem.Allocator) root.AudioError!?Device {
         _ = self;
-        return try Device.init(allocator, "null:default", "Null Output Device", .output);
+        return try Device.init(allocator, "null:output", "Null Output Device", .output);
+    }
+
+    pub fn defaultInputDevice(self: Host, allocator: std.mem.Allocator) root.AudioError!?Device {
+        _ = self;
+        return try Device.init(allocator, "null:input", "Null Input Device", .input);
     }
 };
 
@@ -73,6 +79,29 @@ pub const Device = struct {
         self: Device,
         allocator: std.mem.Allocator,
     ) root.AudioError![]root.SupportedStreamConfigRange {
+        if (!self.direction.supportsOutput()) return root.AudioError.UnsupportedOperation;
+        return self.makeDefaultConfigs(allocator);
+    }
+
+    pub fn supportedInputConfigs(
+        self: Device,
+        allocator: std.mem.Allocator,
+    ) root.AudioError![]root.SupportedStreamConfigRange {
+        if (!self.direction.supportsInput()) return root.AudioError.UnsupportedOperation;
+        return self.makeDefaultConfigs(allocator);
+    }
+
+    pub fn defaultOutputConfig(self: Device) root.AudioError!root.SupportedStreamConfig {
+        if (!self.direction.supportsOutput()) return root.AudioError.UnsupportedOperation;
+        return defaultF32Config();
+    }
+
+    pub fn defaultInputConfig(self: Device) root.AudioError!root.SupportedStreamConfig {
+        if (!self.direction.supportsInput()) return root.AudioError.UnsupportedOperation;
+        return defaultF32Config();
+    }
+
+    fn makeDefaultConfigs(self: Device, allocator: std.mem.Allocator) root.AudioError![]root.SupportedStreamConfigRange {
         _ = self;
         const configs = try allocator.alloc(root.SupportedStreamConfigRange, 1);
         configs[0] = .{
@@ -85,8 +114,7 @@ pub const Device = struct {
         return configs;
     }
 
-    pub fn defaultOutputConfig(self: Device) root.AudioError!root.SupportedStreamConfig {
-        _ = self;
+    fn defaultF32Config() root.SupportedStreamConfig {
         return .{
             .channels = 2,
             .sample_rate = 48_000,
@@ -100,21 +128,52 @@ pub const Device = struct {
         config_value: root.StreamConfig,
         callback: root.OutputCallbackF32,
         userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
     ) root.AudioError!Stream {
-        _ = self;
+        if (!self.direction.supportsOutput()) return root.AudioError.UnsupportedOperation;
         try config_value.validate();
         return .{
+            .direction = .output,
             .config = config_value,
-            .callback = callback,
+            .callback = .{ .output = callback },
             .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
+        };
+    }
+
+    pub fn buildInputStreamF32(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.InputCallbackF32,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        if (!self.direction.supportsInput()) return root.AudioError.UnsupportedOperation;
+        try config_value.validate();
+        return .{
+            .direction = .input,
+            .config = config_value,
+            .callback = .{ .input = callback },
+            .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
         };
     }
 };
 
 pub const Stream = struct {
+    direction: root.DeviceDirection,
     config: root.StreamConfig,
-    callback: root.OutputCallbackF32,
+    callback: union(enum) {
+        output: root.OutputCallbackF32,
+        input: root.InputCallbackF32,
+    },
     userdata: ?*anyopaque,
+    error_callback: ?root.StreamErrorCallback,
+    error_userdata: ?*anyopaque,
     played: bool = false,
 
     pub fn play(self: *Stream) root.AudioError!void {
@@ -125,15 +184,29 @@ pub const Stream = struct {
         var scratch: [4096]f32 = undefined;
         const samples = @min(scratch.len, frames * self.config.channels);
         @memset(scratch[0..samples], 0);
-        self.callback(scratch[0..samples], .{
-            .callback = root.StreamInstant.nowMonotonic(),
-            .playback = root.StreamInstant.nowMonotonic(),
-        }, self.userdata);
+        const now = root.StreamInstant.nowMonotonic();
+        switch (self.callback) {
+            .output => |callback| callback(scratch[0..samples], .{
+                .callback = now,
+                .playback = now,
+            }, self.userdata),
+            .input => |callback| callback(scratch[0..samples], .{
+                .callback = now,
+                .capture = now,
+            }, self.userdata),
+        }
         self.played = true;
     }
 
     pub fn pause(self: *Stream) root.AudioError!void {
         self.played = false;
+    }
+
+    pub fn bufferSize(self: *Stream) root.AudioError!u32 {
+        return switch (self.config.buffer_size) {
+            .default => 128,
+            .fixed => |value| value,
+        };
     }
 
     pub fn deinit(self: *Stream) void {
@@ -163,7 +236,7 @@ test "null backend can build and play a callback stream" {
     var output_stream = try device.buildOutputStreamF32(.{
         .channels = 2,
         .sample_rate = 48_000,
-    }, State.callback, &state);
+    }, State.callback, &state, null, null);
     defer output_stream.deinit();
 
     try output_stream.play();

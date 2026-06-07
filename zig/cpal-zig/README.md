@@ -8,10 +8,13 @@ input/output streams. The first implementation target is ALSA on Linux.
 
 ## Status
 
-- ALSA host boundary: initial implementation
-- ALSA device enumeration: initial PCM hint enumeration
-- ALSA output stream: initial `f32` callback stream through `snd_pcm_writei`
-- Input streams: not implemented yet
+- ALSA host boundary: implemented for Linux
+- ALSA device enumeration: PCM hint enumeration with input/output/duplex labels
+- ALSA config probing: interleaved `f32` and `i16` playback/capture ranges
+- ALSA output stream: `f32` callback stream through worker-threaded `snd_pcm_writei`
+- ALSA input stream: `f32` callback stream through worker-threaded `snd_pcm_readi`
+- Stream lifecycle: `play`, `pause`, `deinit`, buffer-size query, xrun recovery,
+  stream error callbacks, and ALSA-backed timestamps
 - CoreAudio, WASAPI, JACK, PulseAudio: extension stubs
 
 See `IMPLEMENTATION_LOG.md` for design notes and gaps.
@@ -31,4 +34,6 @@ zig build
 ./zig-out/bin/print_stream_configs
 ./zig-out/bin/open_output_stream
 ./zig-out/bin/sine_wave
+./zig-out/bin/record_input
+./zig-out/bin/input_output_feedback
 ```

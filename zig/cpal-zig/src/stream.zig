@@ -31,9 +31,25 @@ pub const OutputCallbackInfo = struct {
     playback: StreamInstant,
 };
 
+pub const InputCallbackInfo = struct {
+    callback: StreamInstant,
+    capture: StreamInstant,
+};
+
+pub const StreamErrorCallback = *const fn (
+    err: root.AudioError,
+    userdata: ?*anyopaque,
+) void;
+
 pub const OutputCallbackF32 = *const fn (
     buffer: []f32,
     info: OutputCallbackInfo,
+    userdata: ?*anyopaque,
+) void;
+
+pub const InputCallbackF32 = *const fn (
+    buffer: []const f32,
+    info: InputCallbackInfo,
     userdata: ?*anyopaque,
 ) void;
 
@@ -55,6 +71,14 @@ pub const Stream = union(enum) {
             .alsa => |*stream_value| stream_value.pause(),
             .stub => |*stream_value| stream_value.pause(),
             .null => |*stream_value| stream_value.pause(),
+        };
+    }
+
+    pub fn bufferSize(self: *Stream) root.AudioError!u32 {
+        return switch (self.*) {
+            .alsa => |*stream_value| stream_value.bufferSize(),
+            .stub => |*stream_value| stream_value.bufferSize(),
+            .null => |*stream_value| stream_value.bufferSize(),
         };
     }
 

@@ -69,6 +69,11 @@ pub const Host = struct {
         _ = self;
         return try Device.init(allocator, "default", "Default ALSA output device", .output);
     }
+
+    pub fn defaultInputDevice(self: Host, allocator: std.mem.Allocator) root.AudioError!?Device {
+        _ = self;
+        return try Device.init(allocator, "default", "Default ALSA input device", .input);
+    }
 };
 
 pub const DeviceList = struct {
@@ -117,12 +122,27 @@ pub const Device = struct {
         allocator: std.mem.Allocator,
     ) root.AudioError![]root.SupportedStreamConfigRange {
         if (!self.direction.supportsOutput()) return root.AudioError.UnsupportedOperation;
+        return self.supportedConfigs(allocator, c.SND_PCM_STREAM_PLAYBACK);
+    }
 
+    pub fn supportedInputConfigs(
+        self: Device,
+        allocator: std.mem.Allocator,
+    ) root.AudioError![]root.SupportedStreamConfigRange {
+        if (!self.direction.supportsInput()) return root.AudioError.UnsupportedOperation;
+        return self.supportedConfigs(allocator, c.SND_PCM_STREAM_CAPTURE);
+    }
+
+    fn supportedConfigs(
+        self: Device,
+        allocator: std.mem.Allocator,
+        stream_type: c.snd_pcm_stream_t,
+    ) root.AudioError![]root.SupportedStreamConfigRange {
         var handle: ?*c.snd_pcm_t = null;
         const open_rc = c.snd_pcm_open(
             &handle,
             self.id_text.ptr,
-            c.SND_PCM_STREAM_PLAYBACK,
+            stream_type,
             c.SND_PCM_NONBLOCK,
         );
         if (open_rc < 0) return mapAlsaError(open_rc);
@@ -149,44 +169,97 @@ pub const Device = struct {
         return configs[0].withStandardSampleRate();
     }
 
+    pub fn defaultInputConfig(self: Device) root.AudioError!root.SupportedStreamConfig {
+        const allocator = std.heap.c_allocator;
+        const configs = try self.supportedInputConfigs(allocator);
+        defer allocator.free(configs);
+        if (configs.len == 0) return root.AudioError.UnsupportedConfig;
+
+        if (findFormat(configs, .f32)) |config_range| {
+            return config_range.withStandardSampleRate();
+        }
+        return configs[0].withStandardSampleRate();
+    }
+
     pub fn buildOutputStreamF32(
         self: Device,
         config_value: root.StreamConfig,
         callback: root.OutputCallbackF32,
         userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
     ) root.AudioError!Stream {
         try config_value.validate();
         if (!self.direction.supportsOutput()) return root.AudioError.UnsupportedOperation;
 
-        var handle: ?*c.snd_pcm_t = null;
-        var rc = c.snd_pcm_open(&handle, self.id_text.ptr, c.SND_PCM_STREAM_PLAYBACK, 0);
-        if (rc < 0) return mapAlsaError(rc);
+        const handle = try openConfiguredPcm(self.id_text, c.SND_PCM_STREAM_PLAYBACK, config_value);
         errdefer _ = c.snd_pcm_close(handle);
-
-        const latency_us: c_uint = switch (config_value.buffer_size) {
-            .default => 100_000,
-            .fixed => |frames| @intCast(@max(1, frames) * 1_000_000 / config_value.sample_rate),
-        };
-
-        rc = c.snd_pcm_set_params(
-            handle,
-            c.SND_PCM_FORMAT_FLOAT_LE,
-            c.SND_PCM_ACCESS_RW_INTERLEAVED,
-            config_value.channels,
-            config_value.sample_rate,
-            1,
-            latency_us,
-        );
-        if (rc < 0) return mapAlsaError(rc);
-
         return .{
-            .handle = handle.?,
+            .handle = handle,
+            .direction = .output,
             .config = config_value,
-            .callback = callback,
+            .callback = .{ .output = callback },
             .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
+            .buffer_size_frames = queryPeriodSize(handle) catch null,
+        };
+    }
+
+    pub fn buildInputStreamF32(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.InputCallbackF32,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        try config_value.validate();
+        if (!self.direction.supportsInput()) return root.AudioError.UnsupportedOperation;
+
+        const handle = try openConfiguredPcm(self.id_text, c.SND_PCM_STREAM_CAPTURE, config_value);
+        errdefer _ = c.snd_pcm_close(handle);
+        return .{
+            .handle = handle,
+            .direction = .input,
+            .config = config_value,
+            .callback = .{ .input = callback },
+            .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
+            .buffer_size_frames = queryPeriodSize(handle) catch null,
         };
     }
 };
+
+fn openConfiguredPcm(
+    id_text: [:0]const u8,
+    stream_type: c.snd_pcm_stream_t,
+    config_value: root.StreamConfig,
+) root.AudioError!*c.snd_pcm_t {
+    var handle: ?*c.snd_pcm_t = null;
+    var rc = c.snd_pcm_open(&handle, id_text.ptr, stream_type, 0);
+    if (rc < 0) return mapAlsaError(rc);
+    errdefer _ = c.snd_pcm_close(handle);
+
+    const latency_us: c_uint = switch (config_value.buffer_size) {
+        .default => 100_000,
+        .fixed => |frames| @intCast(@max(1, frames) * 1_000_000 / config_value.sample_rate),
+    };
+
+    rc = c.snd_pcm_set_params(
+        handle,
+        c.SND_PCM_FORMAT_FLOAT_LE,
+        c.SND_PCM_ACCESS_RW_INTERLEAVED,
+        config_value.channels,
+        config_value.sample_rate,
+        1,
+        latency_us,
+    );
+    if (rc < 0) return mapAlsaError(rc);
+
+    return handle.?;
+}
 
 fn appendProbedFormat(
     allocator: std.mem.Allocator,
@@ -294,9 +367,16 @@ fn findFormat(
 
 pub const Stream = struct {
     handle: *c.snd_pcm_t,
+    direction: root.DeviceDirection,
     config: root.StreamConfig,
-    callback: root.OutputCallbackF32,
+    callback: union(enum) {
+        output: root.OutputCallbackF32,
+        input: root.InputCallbackF32,
+    },
     userdata: ?*anyopaque,
+    error_callback: ?root.StreamErrorCallback,
+    error_userdata: ?*anyopaque,
+    buffer_size_frames: ?u32,
     thread: ?std.Thread = null,
     running: std.atomic.Value(bool) = .init(false),
 
@@ -321,6 +401,11 @@ pub const Stream = struct {
         if (rc < 0) return mapAlsaError(rc);
     }
 
+    pub fn bufferSize(self: *Stream) root.AudioError!u32 {
+        if (self.buffer_size_frames) |frames| return frames;
+        return queryPeriodSize(self.handle);
+    }
+
     pub fn deinit(self: *Stream) void {
         _ = self.pause() catch {};
         _ = c.snd_pcm_close(self.handle);
@@ -337,20 +422,82 @@ pub const Stream = struct {
         defer allocator.free(buffer);
 
         while (self.running.load(.seq_cst)) {
-            @memset(buffer, 0);
-            const now = root.StreamInstant.nowMonotonic();
-            self.callback(buffer, .{ .callback = now, .playback = now }, self.userdata);
-            const written = c.snd_pcm_writei(self.handle, buffer.ptr, @intCast(frames));
-            if (written < 0) {
-                const recovered = c.snd_pcm_recover(self.handle, @intCast(written), 1);
-                if (recovered < 0) {
-                    self.running.store(false, .seq_cst);
-                    return;
-                }
+            switch (self.callback) {
+                .output => |callback| self.runOutputCallback(callback, buffer, frames),
+                .input => |callback| self.runInputCallback(callback, buffer, frames),
             }
         }
     }
+
+    fn runOutputCallback(
+        self: *Stream,
+        callback: root.OutputCallbackF32,
+        buffer: []f32,
+        frames: usize,
+    ) void {
+        @memset(buffer, 0);
+        const now = streamTimestamp(self.handle);
+        callback(buffer, .{ .callback = now, .playback = now }, self.userdata);
+        const written = c.snd_pcm_writei(self.handle, buffer.ptr, @intCast(frames));
+        if (written < 0) self.handlePcmIoError(@intCast(written));
+    }
+
+    fn runInputCallback(
+        self: *Stream,
+        callback: root.InputCallbackF32,
+        buffer: []f32,
+        frames: usize,
+    ) void {
+        const read = c.snd_pcm_readi(self.handle, buffer.ptr, @intCast(frames));
+        if (read < 0) {
+            self.handlePcmIoError(@intCast(read));
+            return;
+        }
+        const sample_count = @as(usize, @intCast(read)) * self.config.channels;
+        const now = streamTimestamp(self.handle);
+        callback(buffer[0..@min(sample_count, buffer.len)], .{
+            .callback = now,
+            .capture = now,
+        }, self.userdata);
+    }
+
+    fn handlePcmIoError(self: *Stream, rc: c_int) void {
+        const err = mapAlsaError(rc);
+        emitStreamError(self, err);
+        const recovered = c.snd_pcm_recover(self.handle, rc, 1);
+        if (recovered < 0) {
+            emitStreamError(self, mapAlsaError(recovered));
+            self.running.store(false, .seq_cst);
+        }
+    }
+
+    fn emitStreamError(self: *Stream, err: root.AudioError) void {
+        if (self.error_callback) |callback| callback(err, self.error_userdata);
+    }
 };
+
+fn queryPeriodSize(handle: ?*c.snd_pcm_t) root.AudioError!u32 {
+    var buffer_size: c.snd_pcm_uframes_t = 0;
+    var period_size: c.snd_pcm_uframes_t = 0;
+    const rc = c.snd_pcm_get_params(handle, &buffer_size, &period_size);
+    if (rc < 0) return mapAlsaError(rc);
+    return clampToU32(period_size);
+}
+
+fn streamTimestamp(handle: ?*c.snd_pcm_t) root.StreamInstant {
+    var avail: c.snd_pcm_uframes_t = 0;
+    var timestamp: c.snd_htimestamp_t = undefined;
+    const rc = c.snd_pcm_htimestamp(handle, &avail, &timestamp);
+    if (rc < 0) return root.StreamInstant.nowMonotonic();
+    return timestampToInstant(timestamp);
+}
+
+fn timestampToInstant(timestamp: c.snd_htimestamp_t) root.StreamInstant {
+    return .{
+        .nanos = @as(u128, @intCast(timestamp.tv_sec)) * std.time.ns_per_s +
+            @as(u128, @intCast(timestamp.tv_nsec)),
+    };
+}
 
 fn directionFromIoId(ioid_ptr: [*c]u8) root.DeviceDirection {
     if (ioid_ptr == null) return .duplex;
@@ -366,6 +513,7 @@ fn normalizeDescription(description: []const u8) []const u8 {
 
 fn mapAlsaError(rc: c_int) root.AudioError {
     return switch (-rc) {
+        c.EPIPE => root.AudioError.Xrun,
         c.EBUSY, c.EAGAIN => root.AudioError.DeviceBusy,
         c.ENODEV, c.ENOENT => root.AudioError.DeviceNotAvailable,
         c.EACCES, c.EPERM => root.AudioError.PermissionDenied,
