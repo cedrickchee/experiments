@@ -23,8 +23,15 @@ Design decisions:
 Unsupported or incomplete:
 
 - Input streams are not implemented.
-- ALSA stream configuration enumeration is conservative and does not yet inspect
-  every hardware constraint the way CPAL does.
+- ALSA output stream configuration enumeration now probes `snd_pcm_hw_params`
+  for interleaved playback support and reports `f32`/`i16` ranges only when ALSA
+  accepts those formats.
+- ALSA channel discovery still collapses ALSA's min/max channel range to one
+  representative channel count because the current public
+  `SupportedStreamConfigRange` model only stores a single channel count. It
+  prefers stereo when available, otherwise the minimum supported channel count.
+- ALSA sample-rate and period-size ranges are direct `snd_pcm_hw_params` ranges;
+  they may still be broad for virtual devices such as PulseAudio/ALSA plugins.
 - ALSA output stream uses a worker thread and `snd_pcm_writei`; it is not yet a
   low-latency real-time callback integration.
 - CoreAudio, WASAPI, JACK, and PulseAudio are extension stubs only.
@@ -38,8 +45,8 @@ Validation performed:
 - `zig build test` passes.
 - `./zig-out/bin/list_hosts_devices` enumerates ALSA PCM hints and the null
   fallback on the local Linux environment.
-- `./zig-out/bin/print_stream_configs` prints conservative ALSA output config
-  ranges for the default output device.
+- `./zig-out/bin/print_stream_configs` prints ALSA-probed output config ranges
+  for the default output device, including period-size frame ranges.
 - `./zig-out/bin/open_output_stream` successfully opens a silent ALSA output
   stream on the local default device.
 - `./zig-out/bin/sine_wave` is built but was not run automatically because it
@@ -53,6 +60,8 @@ Runtime fixes found during smoke testing:
   The first version deinitialized moved device strings too early.
 - ALSA device IDs are stored as sentinel-terminated slices before passing them
   to `snd_pcm_open`.
+- ALSA output config probing replaced the initial fixed placeholder ranges.
+  The local default device reports `f32` and `i16` interleaved playback support.
 
 Differences from Rust CPAL:
 

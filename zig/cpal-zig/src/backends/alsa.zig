@@ -116,33 +116,37 @@ pub const Device = struct {
         self: Device,
         allocator: std.mem.Allocator,
     ) root.AudioError![]root.SupportedStreamConfigRange {
-        _ = self;
-        const configs = try allocator.alloc(root.SupportedStreamConfigRange, 2);
-        configs[0] = .{
-            .channels = 2,
-            .min_sample_rate = 8_000,
-            .max_sample_rate = 192_000,
-            .buffer_size = .{ .range = .{ .min = 32, .max = 8192 } },
-            .sample_format = .f32,
-        };
-        configs[1] = .{
-            .channels = 2,
-            .min_sample_rate = 8_000,
-            .max_sample_rate = 192_000,
-            .buffer_size = .{ .range = .{ .min = 32, .max = 8192 } },
-            .sample_format = .i16,
-        };
-        return configs;
+        if (!self.direction.supportsOutput()) return root.AudioError.UnsupportedOperation;
+
+        var handle: ?*c.snd_pcm_t = null;
+        const open_rc = c.snd_pcm_open(
+            &handle,
+            self.id_text.ptr,
+            c.SND_PCM_STREAM_PLAYBACK,
+            c.SND_PCM_NONBLOCK,
+        );
+        if (open_rc < 0) return mapAlsaError(open_rc);
+        defer _ = c.snd_pcm_close(handle);
+
+        var configs: std.ArrayList(root.SupportedStreamConfigRange) = .empty;
+        errdefer configs.deinit(allocator);
+
+        try appendProbedFormat(allocator, &configs, handle, .f32, c.SND_PCM_FORMAT_FLOAT_LE);
+        try appendProbedFormat(allocator, &configs, handle, .i16, c.SND_PCM_FORMAT_S16_LE);
+
+        return configs.toOwnedSlice(allocator);
     }
 
     pub fn defaultOutputConfig(self: Device) root.AudioError!root.SupportedStreamConfig {
-        _ = self;
-        return .{
-            .channels = 2,
-            .sample_rate = 48_000,
-            .buffer_size = .{ .range = .{ .min = 32, .max = 8192 } },
-            .sample_format = .f32,
-        };
+        const allocator = std.heap.c_allocator;
+        const configs = try self.supportedOutputConfigs(allocator);
+        defer allocator.free(configs);
+        if (configs.len == 0) return root.AudioError.UnsupportedConfig;
+
+        if (findFormat(configs, .f32)) |config_range| {
+            return config_range.withStandardSampleRate();
+        }
+        return configs[0].withStandardSampleRate();
     }
 
     pub fn buildOutputStreamF32(
@@ -183,6 +187,110 @@ pub const Device = struct {
         };
     }
 };
+
+fn appendProbedFormat(
+    allocator: std.mem.Allocator,
+    configs: *std.ArrayList(root.SupportedStreamConfigRange),
+    handle: ?*c.snd_pcm_t,
+    sample_format: root.SampleFormat,
+    alsa_format: c.snd_pcm_format_t,
+) root.AudioError!void {
+    var params: ?*c.snd_pcm_hw_params_t = null;
+    var rc = c.snd_pcm_hw_params_malloc(&params);
+    if (rc < 0) return mapAlsaError(rc);
+    defer c.snd_pcm_hw_params_free(params);
+
+    rc = c.snd_pcm_hw_params_any(handle, params);
+    if (rc < 0) return mapAlsaError(rc);
+
+    rc = c.snd_pcm_hw_params_set_access(handle, params, c.SND_PCM_ACCESS_RW_INTERLEAVED);
+    if (rc < 0) return;
+
+    rc = c.snd_pcm_hw_params_test_format(handle, params, alsa_format);
+    if (rc < 0) return;
+
+    rc = c.snd_pcm_hw_params_set_format(handle, params, alsa_format);
+    if (rc < 0) return;
+
+    const channel_range = try probedChannelRange(params);
+    const rate_range = try probedRateRange(params);
+    const period_range = try probedPeriodSizeRange(params);
+
+    try configs.append(allocator, .{
+        .channels = chooseRepresentativeChannels(channel_range.min, channel_range.max),
+        .min_sample_rate = rate_range.min,
+        .max_sample_rate = rate_range.max,
+        .buffer_size = .{ .range = .{
+            .min = period_range.min,
+            .max = period_range.max,
+        } },
+        .sample_format = sample_format,
+    });
+}
+
+const UIntRange = struct {
+    min: u32,
+    max: u32,
+};
+
+fn probedChannelRange(params: ?*c.snd_pcm_hw_params_t) root.AudioError!UIntRange {
+    var min: c_uint = 0;
+    var max: c_uint = 0;
+    var rc = c.snd_pcm_hw_params_get_channels_min(params, &min);
+    if (rc < 0) return mapAlsaError(rc);
+    rc = c.snd_pcm_hw_params_get_channels_max(params, &max);
+    if (rc < 0) return mapAlsaError(rc);
+    return sanitizeRange(min, max, 1, std.math.maxInt(u16));
+}
+
+fn probedRateRange(params: ?*c.snd_pcm_hw_params_t) root.AudioError!UIntRange {
+    var min: c_uint = 0;
+    var max: c_uint = 0;
+    var dir: c_int = 0;
+    var rc = c.snd_pcm_hw_params_get_rate_min(params, &min, &dir);
+    if (rc < 0) return mapAlsaError(rc);
+    rc = c.snd_pcm_hw_params_get_rate_max(params, &max, &dir);
+    if (rc < 0) return mapAlsaError(rc);
+    return sanitizeRange(min, max, 1, 768_000);
+}
+
+fn probedPeriodSizeRange(params: ?*c.snd_pcm_hw_params_t) root.AudioError!UIntRange {
+    var min: c.snd_pcm_uframes_t = 0;
+    var max: c.snd_pcm_uframes_t = 0;
+    var dir: c_int = 0;
+    var rc = c.snd_pcm_hw_params_get_period_size_min(params, &min, &dir);
+    if (rc < 0) return mapAlsaError(rc);
+    rc = c.snd_pcm_hw_params_get_period_size_max(params, &max, &dir);
+    if (rc < 0) return mapAlsaError(rc);
+    return sanitizeRange(min, max, 1, std.math.maxInt(u32));
+}
+
+fn sanitizeRange(min_value: anytype, max_value: anytype, fallback_min: u32, clamp_max: u32) UIntRange {
+    var min: u32 = if (min_value == 0) fallback_min else clampToU32(min_value);
+    var max: u32 = if (max_value == 0) min else clampToU32(max_value);
+    min = @max(min, fallback_min);
+    max = @min(@max(max, min), clamp_max);
+    return .{ .min = min, .max = max };
+}
+
+fn clampToU32(value: anytype) u32 {
+    return if (value > std.math.maxInt(u32)) std.math.maxInt(u32) else @intCast(value);
+}
+
+fn chooseRepresentativeChannels(min: u32, max: u32) u16 {
+    if (min <= 2 and max >= 2) return 2;
+    return @intCast(@min(max, @max(min, 1)));
+}
+
+fn findFormat(
+    configs: []const root.SupportedStreamConfigRange,
+    sample_format: root.SampleFormat,
+) ?root.SupportedStreamConfigRange {
+    for (configs) |config_range| {
+        if (config_range.sample_format == sample_format) return config_range;
+    }
+    return null;
+}
 
 pub const Stream = struct {
     handle: *c.snd_pcm_t,
@@ -269,4 +377,37 @@ fn mapAlsaError(rc: c_int) root.AudioError {
 
 test "ALSA direction parsing handles missing IOID as duplex" {
     try std.testing.expectEqual(root.DeviceDirection.duplex, directionFromIoId(null));
+}
+
+test "ALSA representative channel selection prefers stereo" {
+    try std.testing.expectEqual(@as(u16, 2), chooseRepresentativeChannels(1, 8));
+    try std.testing.expectEqual(@as(u16, 1), chooseRepresentativeChannels(1, 1));
+    try std.testing.expectEqual(@as(u16, 4), chooseRepresentativeChannels(4, 8));
+}
+
+test "ALSA range sanitation handles zeros and inverted ranges" {
+    try std.testing.expectEqual(UIntRange{ .min = 1, .max = 1 }, sanitizeRange(0, 0, 1, 1024));
+    try std.testing.expectEqual(UIntRange{ .min = 64, .max = 64 }, sanitizeRange(64, 32, 1, 1024));
+    try std.testing.expectEqual(UIntRange{ .min = 64, .max = 1024 }, sanitizeRange(64, 4096, 1, 1024));
+}
+
+test "ALSA preferred default format lookup chooses f32 when present" {
+    const ranges = [_]root.SupportedStreamConfigRange{
+        .{
+            .channels = 2,
+            .min_sample_rate = 44_100,
+            .max_sample_rate = 48_000,
+            .buffer_size = .unknown,
+            .sample_format = .i16,
+        },
+        .{
+            .channels = 2,
+            .min_sample_rate = 44_100,
+            .max_sample_rate = 48_000,
+            .buffer_size = .unknown,
+            .sample_format = .f32,
+        },
+    };
+    const found = findFormat(&ranges, .f32).?;
+    try std.testing.expectEqual(root.SampleFormat.f32, found.sample_format);
 }
