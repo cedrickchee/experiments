@@ -55,9 +55,10 @@ fn printOptionalI64(stdout: *std.Io.Writer, value: ?i64) !void {
 }
 
 fn printDiagnosticsLine(stdout: *std.Io.Writer, diagnostics: cpal.StreamDiagnostics) !void {
-    try stdout.print("  run={s}, backend={s}, latency={s}, scheduling={s}, avail=", .{
+    try stdout.print("  run={s}, backend={s}, timestamp={s}, latency={s}, scheduling={s}, avail=", .{
         @tagName(diagnostics.run_status),
         @tagName(diagnostics.backend_state),
+        @tagName(diagnostics.timestamp_status),
         @tagName(diagnostics.latency_status),
         @tagName(diagnostics.scheduling_status),
     });
@@ -70,6 +71,10 @@ fn printDiagnosticsLine(stdout: *std.Io.Writer, diagnostics: cpal.StreamDiagnost
     try printOptionalU32(stdout, diagnostics.buffer_size_frames);
     try stdout.print(" frames, period=", .{});
     try printOptionalU32(stdout, diagnostics.period_size_frames);
+    try stdout.print(" frames, avail_min=", .{});
+    try printOptionalU32(stdout, diagnostics.avail_min_frames);
+    try stdout.print(" frames, start_threshold=", .{});
+    try printOptionalU32(stdout, diagnostics.start_threshold_frames);
     try stdout.print(" frames, delay=", .{});
     try printOptionalI64(stdout, diagnostics.delay_frames);
     try stdout.print(" frames/", .{});
@@ -85,8 +90,14 @@ fn printDiagnosticsLine(stdout: *std.Io.Writer, diagnostics: cpal.StreamDiagnost
         diagnostics.recovery_count,
     });
     try printOptionalU64(stdout, diagnostics.last_callback_interval_ns);
+    try stdout.print(" ns, expected_interval=", .{});
+    try printOptionalU64(stdout, diagnostics.expected_callback_interval_ns);
     try stdout.print(" ns, drift=", .{});
     try printOptionalI64(stdout, diagnostics.last_callback_drift_ns);
+    try stdout.print(" ns, max_interval=", .{});
+    try printOptionalU64(stdout, diagnostics.max_callback_interval_ns);
+    try stdout.print(" ns, max_abs_drift=", .{});
+    try printOptionalU64(stdout, diagnostics.max_callback_drift_abs_ns);
     try stdout.print(" ns", .{});
     try stdout.print(", timestamp_ns={d}\n", .{diagnostics.timestamp.nanos});
 }
@@ -97,6 +108,9 @@ fn validateDiagnostics(diagnostics: cpal.StreamDiagnostics) DiagnosticsSmokeErro
     if (diagnostics.xrun_count != 0) return DiagnosticsSmokeError.XrunsObserved;
     if (diagnostics.period_size_frames == null) return DiagnosticsSmokeError.MissingPeriodSize;
     if (diagnostics.buffer_size_frames == null) return DiagnosticsSmokeError.MissingTotalBufferSize;
+    if (diagnostics.avail_min_frames == null) return DiagnosticsSmokeError.MissingPeriodSize;
+    if (diagnostics.start_threshold_frames == null) return DiagnosticsSmokeError.MissingTotalBufferSize;
+    if (diagnostics.timestamp_status == .unavailable) return DiagnosticsSmokeError.LatencyUnavailable;
     if (diagnostics.latency_status == .unavailable) return DiagnosticsSmokeError.LatencyUnavailable;
 }
 

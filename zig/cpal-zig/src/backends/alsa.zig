@@ -5,15 +5,26 @@ const root = @import("../root.zig");
 const c = @cImport({
     @cInclude("stdlib.h");
     @cInclude("poll.h");
+    @cInclude("unistd.h");
+    @cInclude("fcntl.h");
     @cInclude("pthread.h");
     @cInclude("sched.h");
     @cInclude("alsa/asoundlib.h");
 });
 
+const hw_prefix = "hw";
+const plughw_prefix = "plughw";
+var alsa_open_mutex: std.atomic.Mutex = .unlocked;
+var alsa_context_mutex: std.atomic.Mutex = .unlocked;
+var alsa_context_count: usize = 0;
+
 pub const Host = struct {
+    context_active: bool = false,
+
     pub fn init() root.AudioError!Host {
         if (!isAvailable()) return root.AudioError.BackendUnavailable;
-        return .{};
+        try retainAlsaContext();
+        return .{ .context_active = true };
     }
 
     pub fn isAvailable() bool {
@@ -37,43 +48,24 @@ pub const Host = struct {
     }
 
     pub fn deinit(self: *Host, allocator: std.mem.Allocator) void {
-        _ = self;
         _ = allocator;
+        if (!self.context_active) return;
+        releaseAlsaContext();
+        self.context_active = false;
     }
 
     pub fn devices(self: Host, allocator: std.mem.Allocator) root.AudioError!DeviceList {
         _ = self;
-        var hints: [*c]?*anyopaque = null;
-        const rc = c.snd_device_name_hint(-1, "pcm", &hints);
-        if (rc < 0) return mapAlsaError(rc);
-        defer _ = c.snd_device_name_free_hint(hints);
-
         var list: std.ArrayList(Device) = .empty;
         errdefer {
             for (list.items) |*device| device.deinit(allocator);
             list.deinit(allocator);
         }
 
-        const hint_array: [*c]?*anyopaque = hints;
-        var index: usize = 0;
-        while (hint_array[index]) |hint| : (index += 1) {
-            const name_ptr = c.snd_device_name_get_hint(hint, "NAME");
-            if (name_ptr == null) continue;
-            defer c.free(name_ptr);
-
-            const ioid_ptr = c.snd_device_name_get_hint(hint, "IOID");
-            defer if (ioid_ptr != null) c.free(ioid_ptr);
-
-            const desc_ptr = c.snd_device_name_get_hint(hint, "DESC");
-            defer if (desc_ptr != null) c.free(desc_ptr);
-
-            const name = std.mem.span(name_ptr);
-            if (name.len == 0) continue;
-
-            const direction = directionFromIoId(ioid_ptr);
-            const desc = if (desc_ptr != null) std.mem.span(desc_ptr) else null;
-            try list.append(allocator, try Device.init(allocator, name, name, desc, direction));
-        }
+        appendHintDevices(allocator, &list) catch |err| {
+            if (deviceEnumerationErrorIsFatal(err)) return err;
+        };
+        try appendPhysicalDevices(allocator, &list);
 
         if (list.items.len == 0) {
             try list.append(allocator, try Device.init(
@@ -90,7 +82,7 @@ pub const Host = struct {
 
     pub fn defaultOutputDevice(self: Host, allocator: std.mem.Allocator) root.AudioError!?Device {
         _ = self;
-        return try Device.init(
+        return try defaultDeviceIfAvailable(
             allocator,
             "default",
             "Default ALSA output device",
@@ -101,7 +93,7 @@ pub const Host = struct {
 
     pub fn defaultInputDevice(self: Host, allocator: std.mem.Allocator) root.AudioError!?Device {
         _ = self;
-        return try Device.init(
+        return try defaultDeviceIfAvailable(
             allocator,
             "default",
             "Default ALSA input device",
@@ -110,6 +102,257 @@ pub const Host = struct {
         );
     }
 };
+
+fn appendHintDevices(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList(Device),
+) root.AudioError!void {
+    var hints: [*c]?*anyopaque = null;
+    const rc = c.snd_device_name_hint(-1, "pcm", &hints);
+    if (rc < 0) return mapAlsaError(rc);
+    defer _ = c.snd_device_name_free_hint(hints);
+
+    const hint_array: [*c]?*anyopaque = hints;
+    var index: usize = 0;
+    while (hint_array[index]) |hint| : (index += 1) {
+        try appendHintDevice(allocator, list, hint);
+    }
+}
+
+fn appendHintDevice(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList(Device),
+    hint: *anyopaque,
+) root.AudioError!void {
+    const name_ptr = c.snd_device_name_get_hint(hint, "NAME");
+    if (name_ptr == null) return;
+    defer c.free(name_ptr);
+
+    const ioid_ptr = c.snd_device_name_get_hint(hint, "IOID");
+    defer if (ioid_ptr != null) c.free(ioid_ptr);
+
+    const desc_ptr = c.snd_device_name_get_hint(hint, "DESC");
+    defer if (desc_ptr != null) c.free(desc_ptr);
+
+    const name = std.mem.span(name_ptr);
+    if (name.len == 0) return;
+
+    const direction = directionFromIoId(ioid_ptr);
+    const desc = if (desc_ptr != null) std.mem.span(desc_ptr) else null;
+    try list.append(allocator, try Device.init(allocator, name, name, desc, direction));
+}
+
+fn deviceEnumerationErrorIsFatal(err: root.AudioError) bool {
+    return switch (err) {
+        root.AudioError.OutOfMemory,
+        root.AudioError.ResourceExhausted,
+        => true,
+        else => false,
+    };
+}
+
+fn appendPhysicalDevices(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList(Device),
+) root.AudioError!void {
+    var card: c_int = -1;
+    while (true) {
+        const next_rc = c.snd_card_next(&card);
+        if (next_rc < 0) return mapAlsaError(next_rc);
+        if (card < 0) break;
+
+        var ctl_name_buffer: [32]u8 = undefined;
+        const ctl_name = std.fmt.bufPrintZ(&ctl_name_buffer, "hw:{d}", .{card}) catch continue;
+        try appendPhysicalCardDevices(allocator, list, card, ctl_name);
+    }
+}
+
+fn appendPhysicalCardDevices(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList(Device),
+    card: c_int,
+    ctl_name: [:0]const u8,
+) root.AudioError!void {
+    var handle: ?*c.snd_ctl_t = null;
+    const open_rc = c.snd_ctl_open(&handle, ctl_name.ptr, c.SND_CTL_NONBLOCK | c.SND_CTL_READONLY);
+    if (open_rc < 0) return;
+    defer _ = c.snd_ctl_close(handle.?);
+
+    var card_info: ?*c.snd_ctl_card_info_t = null;
+    if (c.snd_ctl_card_info_malloc(&card_info) < 0) return;
+    defer c.snd_ctl_card_info_free(card_info);
+    if (c.snd_ctl_card_info(handle.?, card_info) < 0) return;
+
+    const card_name = cardInfoName(card_info);
+    var device_index: c_int = -1;
+    while (true) {
+        const pcm_next_rc = c.snd_ctl_pcm_next_device(handle.?, &device_index);
+        if (pcm_next_rc < 0) return mapAlsaError(pcm_next_rc);
+        if (device_index < 0) break;
+        try appendPhysicalPcmDevice(allocator, list, handle.?, card, device_index, card_name);
+    }
+}
+
+fn appendPhysicalPcmDevice(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList(Device),
+    handle: *c.snd_ctl_t,
+    card: c_int,
+    device_index: c_int,
+    card_name: []const u8,
+) root.AudioError!void {
+    const playback_info = queryPcmInfo(handle, device_index, c.SND_PCM_STREAM_PLAYBACK);
+    defer if (playback_info) |info| c.snd_pcm_info_free(info);
+    const capture_info = queryPcmInfo(handle, device_index, c.SND_PCM_STREAM_CAPTURE);
+    defer if (capture_info) |info| c.snd_pcm_info_free(info);
+
+    const direction = physicalPcmDirection(playback_info != null, capture_info != null) orelse return;
+    const device_name = pcmInfoName(playback_info) orelse
+        pcmInfoName(capture_info) orelse
+        "Device";
+
+    try appendPhysicalDeviceAlias(
+        allocator,
+        list,
+        hw_prefix,
+        card,
+        device_index,
+        card_name,
+        device_name,
+        "Direct hardware device without any conversions",
+        direction,
+    );
+    try appendPhysicalDeviceAlias(
+        allocator,
+        list,
+        plughw_prefix,
+        card,
+        device_index,
+        card_name,
+        device_name,
+        "Hardware device with all software conversions",
+        direction,
+    );
+}
+
+fn appendPhysicalDeviceAlias(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList(Device),
+    prefix: []const u8,
+    card: c_int,
+    device_index: c_int,
+    card_name: []const u8,
+    device_name: []const u8,
+    purpose: []const u8,
+    direction: root.DeviceDirection,
+) root.AudioError!void {
+    var id_buffer: [64]u8 = undefined;
+    const id = std.fmt.bufPrint(&id_buffer, "{s}:CARD={d},DEV={d}", .{ prefix, card, device_index }) catch
+        return root.AudioError.ResourceExhausted;
+    if (deviceListContainsId(list.items, id)) return;
+
+    var name_buffer: [256]u8 = undefined;
+    const name = physicalDeviceDisplayName(&name_buffer, card_name, device_name) catch
+        return root.AudioError.ResourceExhausted;
+
+    var description_buffer: [512]u8 = undefined;
+    const description = std.fmt.bufPrint(
+        &description_buffer,
+        "{s}\n{s}",
+        .{ name, purpose },
+    ) catch return root.AudioError.ResourceExhausted;
+
+    try list.append(allocator, try Device.init(allocator, id, name, description, direction));
+}
+
+fn queryPcmInfo(
+    handle: *c.snd_ctl_t,
+    device_index: c_int,
+    stream_type: c.snd_pcm_stream_t,
+) ?*c.snd_pcm_info_t {
+    var info: ?*c.snd_pcm_info_t = null;
+    if (c.snd_pcm_info_malloc(&info) < 0) return null;
+    c.snd_pcm_info_set_device(info, @intCast(device_index));
+    c.snd_pcm_info_set_subdevice(info, 0);
+    c.snd_pcm_info_set_stream(info, stream_type);
+    if (c.snd_ctl_pcm_info(handle, info) < 0) {
+        c.snd_pcm_info_free(info);
+        return null;
+    }
+    return info;
+}
+
+fn cardInfoName(info: ?*c.snd_ctl_card_info_t) []const u8 {
+    if (info == null) return "Card";
+    const name_ptr = c.snd_ctl_card_info_get_name(info);
+    if (name_ptr == null) return "Card";
+    const name = std.mem.span(name_ptr);
+    return if (name.len == 0) "Card" else name;
+}
+
+fn pcmInfoName(info: ?*c.snd_pcm_info_t) ?[]const u8 {
+    const value = info orelse return null;
+    const name_ptr = c.snd_pcm_info_get_name(value);
+    if (name_ptr == null) return null;
+    const name = std.mem.span(name_ptr);
+    return if (name.len == 0) null else name;
+}
+
+fn physicalPcmDirection(has_playback: bool, has_capture: bool) ?root.DeviceDirection {
+    if (has_playback and has_capture) return .duplex;
+    if (has_playback) return .output;
+    if (has_capture) return .input;
+    return null;
+}
+
+fn physicalDeviceDisplayName(
+    buffer: []u8,
+    card_name: []const u8,
+    device_name: []const u8,
+) std.fmt.BufPrintError![]const u8 {
+    if (std.mem.eql(u8, card_name, "Card")) return std.fmt.bufPrint(buffer, "{s}", .{device_name});
+    if (std.mem.eql(u8, device_name, "Device")) return std.fmt.bufPrint(buffer, "{s}", .{card_name});
+    return std.fmt.bufPrint(buffer, "{s}, {s}", .{ card_name, device_name });
+}
+
+fn deviceListContainsId(items: []const Device, id: []const u8) bool {
+    for (items) |device| {
+        if (std.mem.eql(u8, device.id_text, id)) return true;
+    }
+    return false;
+}
+
+fn alsaDeviceType(id_text: []const u8) root.DeviceType {
+    if (isAlsaPhysicalAlias(id_text)) return .hardware;
+    if (std.mem.eql(u8, id_text, "null")) return .loopback;
+    return .virtual;
+}
+
+fn alsaInterfaceType(id_text: []const u8) root.InterfaceType {
+    if (isAlsaPhysicalAlias(id_text)) return .alsa;
+    return .virtual;
+}
+
+fn isAlsaPhysicalAlias(id_text: []const u8) bool {
+    return std.mem.startsWith(u8, id_text, "hw:") or
+        std.mem.startsWith(u8, id_text, "plughw:");
+}
+
+fn defaultDeviceIfAvailable(
+    allocator: std.mem.Allocator,
+    id_text: []const u8,
+    name_text: []const u8,
+    description_text: []const u8,
+    direction: root.DeviceDirection,
+) root.AudioError!?Device {
+    var device = try Device.init(allocator, id_text, name_text, description_text, direction);
+    errdefer device.deinit(allocator);
+    if (!device.isAvailable()) {
+        device.deinit(allocator);
+        return null;
+    }
+    return device;
+}
 
 const ControlSubscription = struct {
     handle: *c.snd_ctl_t,
@@ -193,6 +436,7 @@ fn waitForControlDeviceChangeSignal(
             @intCast(subscription.descriptor_count),
             &revents,
         );
+        if (alsaRcIsInterrupted(rc)) return false;
         if (rc < 0) return true;
         if (controlReventsSignalDeviceChange(revents)) {
             drainControlEvents(subscription.handle);
@@ -299,6 +543,7 @@ pub const Device = struct {
     name_text: []const u8,
     description_text: ?[]const u8,
     direction: root.DeviceDirection,
+    context_active: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -307,22 +552,37 @@ pub const Device = struct {
         description_text: ?[]const u8,
         direction: root.DeviceDirection,
     ) root.AudioError!Device {
-        const normalized_description = if (description_text) |description| normalizeDescription(description) else null;
+        const normalized_description = if (description_text) |text| normalizeDescription(text) else null;
+        const owned_id = try allocator.dupeZ(u8, id_text);
+        errdefer allocator.free(owned_id);
+
+        const owned_name = try allocator.dupe(u8, normalizeDescription(name_text));
+        errdefer allocator.free(owned_name);
+
+        const owned_description = if (normalized_description) |text|
+            try allocator.dupe(u8, text)
+        else
+            null;
+        errdefer if (owned_description) |text| allocator.free(text);
+
+        try retainAlsaContext();
         return .{
-            .id_text = try allocator.dupeZ(u8, id_text),
-            .name_text = try allocator.dupe(u8, normalizeDescription(name_text)),
-            .description_text = if (normalized_description) |description|
-                try allocator.dupe(u8, description)
-            else
-                null,
+            .id_text = owned_id,
+            .name_text = owned_name,
+            .description_text = owned_description,
             .direction = direction,
+            .context_active = true,
         };
     }
 
     pub fn deinit(self: *Device, allocator: std.mem.Allocator) void {
         allocator.free(self.id_text);
         allocator.free(self.name_text);
-        if (self.description_text) |description| allocator.free(description);
+        if (self.description_text) |text| allocator.free(text);
+        if (self.context_active) {
+            releaseAlsaContext();
+            self.context_active = false;
+        }
     }
 
     pub fn info(self: Device) root.DeviceInfo {
@@ -332,6 +592,20 @@ pub const Device = struct {
             .name = self.name_text,
             .description = self.description_text,
             .direction = self.direction,
+        };
+    }
+
+    pub fn description(self: Device) root.DeviceDescription {
+        return .{
+            .host = .alsa,
+            .id = self.id_text,
+            .name = self.name_text,
+            .driver = "ALSA",
+            .device_type = alsaDeviceType(self.id_text),
+            .interface_type = alsaInterfaceType(self.id_text),
+            .direction = self.direction,
+            .address = self.id_text,
+            .extended = self.description_text,
         };
     }
 
@@ -370,8 +644,8 @@ pub const Device = struct {
         _ = c.snd_lib_error_set_handler(quietAlsaErrorHandler);
         defer _ = c.snd_lib_error_set_handler(previous_handler);
 
-        const rc = c.snd_pcm_open(&handle, self.id_text.ptr, stream_type, c.SND_PCM_NONBLOCK);
-        if (rc < 0) return mapAlsaError(rc);
+        const rc = sndPcmOpenLocked(&handle, self.id_text, stream_type, c.SND_PCM_NONBLOCK);
+        if (rc < 0) return mapAlsaOpenError(rc, stream_type);
         return handle.?;
     }
 
@@ -487,6 +761,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -513,6 +788,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -539,6 +815,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -565,6 +842,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -591,6 +869,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -617,6 +896,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -643,6 +923,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -669,6 +950,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -695,6 +977,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -721,6 +1004,115 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
+        };
+    }
+
+    pub fn buildOutputStreamI24(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.OutputCallbackI24,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        try config_value.validate();
+        if (!self.direction.supportsOutput()) return root.AudioError.UnsupportedOperation;
+
+        const handle = try openConfiguredPcm(self.id_text, c.SND_PCM_STREAM_PLAYBACK, config_value, .i24);
+        errdefer _ = c.snd_pcm_close(handle);
+        return .{
+            .handle = handle,
+            .direction = .output,
+            .sample_format = .i24,
+            .config = config_value,
+            .callback = .{ .output_i24 = callback },
+            .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
+            .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
+        };
+    }
+
+    pub fn buildInputStreamI24(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.InputCallbackI24,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        try config_value.validate();
+        if (!self.direction.supportsInput()) return root.AudioError.UnsupportedOperation;
+
+        const handle = try openConfiguredPcm(self.id_text, c.SND_PCM_STREAM_CAPTURE, config_value, .i24);
+        errdefer _ = c.snd_pcm_close(handle);
+        return .{
+            .handle = handle,
+            .direction = .input,
+            .sample_format = .i24,
+            .config = config_value,
+            .callback = .{ .input_i24 = callback },
+            .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
+            .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
+        };
+    }
+
+    pub fn buildOutputStreamU24(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.OutputCallbackU24,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        try config_value.validate();
+        if (!self.direction.supportsOutput()) return root.AudioError.UnsupportedOperation;
+
+        const handle = try openConfiguredPcm(self.id_text, c.SND_PCM_STREAM_PLAYBACK, config_value, .u24);
+        errdefer _ = c.snd_pcm_close(handle);
+        return .{
+            .handle = handle,
+            .direction = .output,
+            .sample_format = .u24,
+            .config = config_value,
+            .callback = .{ .output_u24 = callback },
+            .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
+            .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
+        };
+    }
+
+    pub fn buildInputStreamU24(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.InputCallbackU24,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        try config_value.validate();
+        if (!self.direction.supportsInput()) return root.AudioError.UnsupportedOperation;
+
+        const handle = try openConfiguredPcm(self.id_text, c.SND_PCM_STREAM_CAPTURE, config_value, .u24);
+        errdefer _ = c.snd_pcm_close(handle);
+        return .{
+            .handle = handle,
+            .direction = .input,
+            .sample_format = .u24,
+            .config = config_value,
+            .callback = .{ .input_u24 = callback },
+            .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
+            .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -747,6 +1139,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -773,6 +1166,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -799,6 +1193,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -825,6 +1220,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -851,6 +1247,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 
@@ -877,6 +1274,7 @@ pub const Device = struct {
             .error_callback = error_callback,
             .error_userdata = error_userdata,
             .buffer_size_frames = queryPeriodSize(handle) catch null,
+            .context_active = try retainAlsaContextFlag(),
         };
     }
 };
@@ -888,8 +1286,8 @@ fn openConfiguredPcm(
     sample_format: root.SampleFormat,
 ) root.AudioError!*c.snd_pcm_t {
     var handle: ?*c.snd_pcm_t = null;
-    const rc = c.snd_pcm_open(&handle, id_text.ptr, stream_type, streamPcmOpenMode());
-    if (rc < 0) return mapAlsaError(rc);
+    const rc = sndPcmOpenLocked(&handle, id_text, stream_type, streamPcmOpenMode());
+    if (rc < 0) return mapAlsaOpenError(rc, stream_type);
     errdefer _ = c.snd_pcm_close(handle);
 
     try configurePcmParams(
@@ -900,6 +1298,72 @@ fn openConfiguredPcm(
     );
 
     return handle.?;
+}
+
+fn sndPcmOpenLocked(
+    handle: *?*c.snd_pcm_t,
+    id_text: [:0]const u8,
+    stream_type: c.snd_pcm_stream_t,
+    mode: c_int,
+) c_int {
+    lockAlsaOpenMutex();
+    defer alsa_open_mutex.unlock();
+    return c.snd_pcm_open(handle, id_text.ptr, stream_type, mode);
+}
+
+fn lockAlsaOpenMutex() void {
+    while (!alsa_open_mutex.tryLock()) {
+        sleepNs(std.time.ns_per_ms);
+    }
+}
+
+fn retainAlsaContext() root.AudioError!void {
+    lockAlsaContextMutex();
+    defer alsa_context_mutex.unlock();
+
+    if (contextCountNeedsConfigUpdate(alsa_context_count)) {
+        const rc = c.snd_config_update();
+        if (rc < 0) return mapAlsaError(rc);
+    }
+    alsa_context_count = nextContextCountAfterRetain(alsa_context_count) orelse return root.AudioError.ResourceExhausted;
+}
+
+fn releaseAlsaContext() void {
+    lockAlsaContextMutex();
+    defer alsa_context_mutex.unlock();
+
+    if (contextCountNeedsGlobalFree(alsa_context_count)) {
+        _ = c.snd_config_update_free_global();
+    }
+    alsa_context_count = nextContextCountAfterRelease(alsa_context_count);
+}
+
+fn lockAlsaContextMutex() void {
+    while (!alsa_context_mutex.tryLock()) {
+        sleepNs(std.time.ns_per_ms);
+    }
+}
+
+fn contextCountNeedsConfigUpdate(count: usize) bool {
+    return count == 0;
+}
+
+fn contextCountNeedsGlobalFree(count: usize) bool {
+    return count == 1;
+}
+
+fn nextContextCountAfterRetain(count: usize) ?usize {
+    if (count == std.math.maxInt(usize)) return null;
+    return count + 1;
+}
+
+fn nextContextCountAfterRelease(count: usize) usize {
+    return count -| 1;
+}
+
+fn retainAlsaContextFlag() root.AudioError!bool {
+    try retainAlsaContext();
+    return true;
 }
 
 fn streamPcmOpenMode() c_int {
@@ -917,7 +1381,35 @@ fn configurePcmParams(
     if (rc < 0) return mapAlsaError(rc);
     defer c.snd_pcm_hw_params_free(params);
 
-    rc = c.snd_pcm_hw_params_any(handle, params);
+    try initBaseHwParams(handle, params, config_value, format);
+    if (!usesCpalStyleDefaultBuffering(config_value)) {
+        try applyRequestedBufferPeriodParams(handle, params, config_value, requestedPeriodFrames(config_value));
+    }
+
+    rc = c.snd_pcm_hw_params(handle, params);
+    if (rc < 0) return mapAlsaError(rc);
+
+    if (usesCpalStyleDefaultBuffering(config_value)) {
+        const initial_sizes = try queryBufferPeriodSizes(handle);
+        try initBaseHwParams(handle, params, config_value, format);
+        try applyRequestedBufferPeriodParams(handle, params, config_value, initial_sizes.period_size_frames);
+        rc = c.snd_pcm_hw_params(handle, params);
+        if (rc < 0) return mapAlsaError(rc);
+    }
+
+    try verifyCommittedBaseHwParams(handle, config_value, format);
+    const sizes = try queryBufferPeriodSizes(handle);
+    try verifyCommittedBufferPeriodSizes(config_value, sizes);
+    try configurePcmSoftwareParams(handle, stream_type, sizes);
+}
+
+fn initBaseHwParams(
+    handle: *c.snd_pcm_t,
+    params: ?*c.snd_pcm_hw_params_t,
+    config_value: root.StreamConfig,
+    format: c.snd_pcm_format_t,
+) root.AudioError!void {
+    var rc = c.snd_pcm_hw_params_any(handle, params);
     if (rc < 0) return mapAlsaError(rc);
 
     rc = c.snd_pcm_hw_params_set_access(handle, params, c.SND_PCM_ACCESS_RW_INTERLEAVED);
@@ -934,24 +1426,28 @@ fn configurePcmParams(
     rc = c.snd_pcm_hw_params_set_rate_near(handle, params, &rate, &dir);
     if (rc < 0) return mapAlsaError(rc);
     if (rate != config_value.sample_rate) return root.AudioError.UnsupportedConfig;
+}
 
-    var period_size = requestedPeriodFrames(config_value);
-    dir = 0;
-    rc = c.snd_pcm_hw_params_set_period_size_near(handle, params, &period_size, &dir);
-    if (rc < 0) return mapAlsaError(rc);
+fn applyRequestedBufferPeriodParams(
+    handle: *c.snd_pcm_t,
+    params: ?*c.snd_pcm_hw_params_t,
+    config_value: root.StreamConfig,
+    requested_period: c.snd_pcm_uframes_t,
+) root.AudioError!void {
+    var period_size = @max(requested_period, 1);
+    var dir: c_int = 0;
+    const period_rc = c.snd_pcm_hw_params_set_period_size_near(handle, params, &period_size, &dir);
+    if (period_rc < 0) return mapAlsaError(period_rc);
     if (!fixedPeriodRequestMatches(config_value, period_size)) return root.AudioError.UnsupportedConfig;
 
     var buffer_size = requestedTotalBufferFrames(config_value, period_size);
-    rc = c.snd_pcm_hw_params_set_buffer_size_near(handle, params, &buffer_size);
-    if (rc < 0) return mapAlsaError(rc);
+    const buffer_rc = c.snd_pcm_hw_params_set_buffer_size_near(handle, params, &buffer_size);
+    if (buffer_rc < 0) return mapAlsaError(buffer_rc);
     if (!fixedTotalBufferRequestMatches(config_value, buffer_size)) return root.AudioError.UnsupportedConfig;
+}
 
-    rc = c.snd_pcm_hw_params(handle, params);
-    if (rc < 0) return mapAlsaError(rc);
-
-    const sizes = try queryBufferPeriodSizes(handle);
-    try verifyCommittedBufferPeriodSizes(config_value, sizes);
-    try configurePcmSoftwareParams(handle, stream_type, sizes);
+fn usesCpalStyleDefaultBuffering(config_value: root.StreamConfig) bool {
+    return config_value.buffer_size == .default and config_value.total_buffer_size == .default;
 }
 
 fn requestedPeriodFrames(config_value: root.StreamConfig) c.snd_pcm_uframes_t {
@@ -967,7 +1463,7 @@ fn requestedTotalBufferFrames(
 ) c.snd_pcm_uframes_t {
     return switch (config_value.total_buffer_size) {
         .fixed => |frames| @intCast(frames),
-        .default => @max(period_size *| 4, period_size),
+        .default => @max(period_size *| 2, period_size),
     };
 }
 
@@ -1008,6 +1504,75 @@ fn verifyCommittedBufferPeriodSizes(
     }
 }
 
+const CommittedBaseHwParams = struct {
+    access: c.snd_pcm_access_t,
+    format: c.snd_pcm_format_t,
+    channels: c_uint,
+    sample_rate: c_uint,
+};
+
+fn verifyCommittedBaseHwParams(
+    handle: *c.snd_pcm_t,
+    config_value: root.StreamConfig,
+    format: c.snd_pcm_format_t,
+) root.AudioError!void {
+    const committed = try queryCommittedBaseHwParams(handle);
+    try verifyCommittedBaseHwParamsValue(committed, config_value, format);
+}
+
+fn queryCommittedBaseHwParams(handle: *c.snd_pcm_t) root.AudioError!CommittedBaseHwParams {
+    var params: ?*c.snd_pcm_hw_params_t = null;
+    var rc = c.snd_pcm_hw_params_malloc(&params);
+    if (rc < 0) return mapAlsaError(rc);
+    defer c.snd_pcm_hw_params_free(params);
+
+    rc = c.snd_pcm_hw_params_current(handle, params);
+    if (rc < 0) return mapAlsaError(rc);
+
+    var access: c.snd_pcm_access_t = undefined;
+    rc = c.snd_pcm_hw_params_get_access(params, &access);
+    if (rc < 0) return mapAlsaError(rc);
+
+    var committed_format: c.snd_pcm_format_t = undefined;
+    rc = c.snd_pcm_hw_params_get_format(params, &committed_format);
+    if (rc < 0) return mapAlsaError(rc);
+
+    var channels: c_uint = 0;
+    rc = c.snd_pcm_hw_params_get_channels(params, &channels);
+    if (rc < 0) return mapAlsaError(rc);
+
+    var sample_rate: c_uint = 0;
+    var dir: c_int = 0;
+    rc = c.snd_pcm_hw_params_get_rate(params, &sample_rate, &dir);
+    if (rc < 0) return mapAlsaError(rc);
+
+    return .{
+        .access = access,
+        .format = committed_format,
+        .channels = channels,
+        .sample_rate = sample_rate,
+    };
+}
+
+fn verifyCommittedBaseHwParamsValue(
+    committed: CommittedBaseHwParams,
+    config_value: root.StreamConfig,
+    format: c.snd_pcm_format_t,
+) root.AudioError!void {
+    if (committed.access != c.SND_PCM_ACCESS_RW_INTERLEAVED) {
+        return root.AudioError.UnsupportedConfig;
+    }
+    if (committed.format != format) {
+        return root.AudioError.UnsupportedConfig;
+    }
+    if (committed.channels != config_value.channels) {
+        return root.AudioError.UnsupportedConfig;
+    }
+    if (committed.sample_rate != config_value.sample_rate) {
+        return root.AudioError.UnsupportedConfig;
+    }
+}
+
 fn configurePcmSoftwareParams(
     handle: *c.snd_pcm_t,
     stream_type: c.snd_pcm_stream_t,
@@ -1025,10 +1590,12 @@ fn configurePcmSoftwareParams(
     rc = c.snd_pcm_sw_params_set_avail_min(handle, params, period_size);
     if (rc < 0) return mapAlsaError(rc);
 
-    if (stream_type == c.SND_PCM_STREAM_PLAYBACK) {
-        rc = c.snd_pcm_sw_params_set_start_threshold(handle, params, period_size);
-        if (rc < 0) return mapAlsaError(rc);
-    }
+    rc = c.snd_pcm_sw_params_set_start_threshold(
+        handle,
+        params,
+        configuredStartThresholdFrames(stream_type, sizes),
+    );
+    if (rc < 0) return mapAlsaError(rc);
 
     configurePcmTimestampParams(handle, params);
 
@@ -1043,10 +1610,30 @@ fn configurePcmTimestampParams(
     var rc = c.snd_pcm_sw_params_set_tstamp_mode(handle, params, c.SND_PCM_TSTAMP_ENABLE);
     if (rc < 0) return;
 
-    rc = c.snd_pcm_sw_params_set_tstamp_type(handle, params, c.SND_PCM_TSTAMP_TYPE_MONOTONIC);
-    if (rc < 0) {
-        _ = c.snd_pcm_sw_params_set_tstamp_type(handle, params, c.SND_PCM_TSTAMP_TYPE_MONOTONIC_RAW);
+    for (preferredTimestampTypes()) |timestamp_type| {
+        rc = c.snd_pcm_sw_params_set_tstamp_type(handle, params, timestamp_type);
+        if (rc >= 0) return;
     }
+}
+
+const preferred_timestamp_types = [_]c.snd_pcm_tstamp_type_t{
+    c.SND_PCM_TSTAMP_TYPE_MONOTONIC_RAW,
+    c.SND_PCM_TSTAMP_TYPE_MONOTONIC,
+};
+
+fn preferredTimestampTypes() []const c.snd_pcm_tstamp_type_t {
+    return &preferred_timestamp_types;
+}
+
+fn configuredStartThresholdFrames(
+    stream_type: c.snd_pcm_stream_t,
+    sizes: BufferPeriodSizes,
+) c.snd_pcm_uframes_t {
+    if (stream_type == c.SND_PCM_STREAM_CAPTURE) return 1;
+
+    const period_size = @max(sizes.period_size_frames, 1);
+    const buffer_size = @max(sizes.buffer_size_frames, 1);
+    return @intCast(@min(period_size *| 2, buffer_size));
 }
 
 const AlsaSampleFormat = struct {
@@ -1060,6 +1647,8 @@ const buildable_alsa_formats = [_]AlsaSampleFormat{
     .{ .sample_format = .u8, .alsa_format = c.SND_PCM_FORMAT_U8 },
     .{ .sample_format = .i16, .alsa_format = c.SND_PCM_FORMAT_S16_LE },
     .{ .sample_format = .u16, .alsa_format = c.SND_PCM_FORMAT_U16_LE },
+    .{ .sample_format = .i24, .alsa_format = c.SND_PCM_FORMAT_S24_LE },
+    .{ .sample_format = .u24, .alsa_format = c.SND_PCM_FORMAT_U24_LE },
     .{ .sample_format = .i32, .alsa_format = c.SND_PCM_FORMAT_S32_LE },
     .{ .sample_format = .u32, .alsa_format = c.SND_PCM_FORMAT_U32_LE },
     .{ .sample_format = .f64, .alsa_format = c.SND_PCM_FORMAT_FLOAT64_LE },
@@ -1096,7 +1685,7 @@ fn runStatusForBackendState(backend_state: root.StreamBackendState) ?root.Stream
     return switch (backend_state) {
         .xrun => .xrun,
         .suspended => .stream_suspended,
-        .disconnected => .stream_invalidated,
+        .disconnected => .device_not_available,
         else => null,
     };
 }
@@ -1117,6 +1706,7 @@ const ObservedBackendError = enum(u8) {
     none,
     xrun,
     suspended,
+    unavailable,
     invalidated,
 };
 
@@ -1124,7 +1714,7 @@ fn observedBackendErrorForBackendState(backend_state: root.StreamBackendState) ?
     return switch (backend_state) {
         .xrun => .xrun,
         .suspended => .suspended,
-        .disconnected => .invalidated,
+        .disconnected => .unavailable,
         else => null,
     };
 }
@@ -1133,6 +1723,7 @@ fn observedBackendErrorForAudioError(err: root.AudioError) ?ObservedBackendError
     return switch (err) {
         root.AudioError.Xrun => .xrun,
         root.AudioError.StreamSuspended => .suspended,
+        root.AudioError.DeviceNotAvailable => .unavailable,
         root.AudioError.StreamInvalidated => .invalidated,
         else => null,
     };
@@ -1142,6 +1733,7 @@ fn audioErrorForObservedBackendError(observed: ObservedBackendError) ?root.Audio
     return switch (observed) {
         .xrun => root.AudioError.Xrun,
         .suspended => root.AudioError.StreamSuspended,
+        .unavailable => root.AudioError.DeviceNotAvailable,
         .invalidated => root.AudioError.StreamInvalidated,
         .none => null,
     };
@@ -1186,6 +1778,10 @@ fn isTerminalRunStatus(run_status_value: root.StreamRunStatus) bool {
         .device_busy,
         => false,
     };
+}
+
+fn runStatusStopsWorker(run_status_value: root.StreamRunStatus) bool {
+    return run_status_value == .stream_invalidated or run_status_value == .device_not_available;
 }
 
 fn appendProbedCapability(
@@ -1326,6 +1922,7 @@ fn callbackSampleCount(frames: usize, channels: u16) root.AudioError!usize {
 
 pub const Stream = struct {
     handle: *c.snd_pcm_t,
+    context_active: bool = false,
     direction: root.DeviceDirection,
     sample_format: root.SampleFormat,
     config: root.StreamConfig,
@@ -1340,6 +1937,10 @@ pub const Stream = struct {
         input_i16: root.InputCallbackI16,
         output_u16: root.OutputCallbackU16,
         input_u16: root.InputCallbackU16,
+        output_i24: root.OutputCallbackI24,
+        input_i24: root.InputCallbackI24,
+        output_u24: root.OutputCallbackU24,
+        input_u24: root.InputCallbackU24,
         output_i32: root.OutputCallbackI32,
         input_i32: root.InputCallbackI32,
         output_u32: root.OutputCallbackU32,
@@ -1351,6 +1952,8 @@ pub const Stream = struct {
     error_callback: ?root.StreamErrorCallback,
     error_userdata: ?*anyopaque,
     buffer_size_frames: ?u32,
+    wakeup_read_fd: c_int = -1,
+    wakeup_write_fd: c_int = -1,
     thread: ?std.Thread = null,
     running: std.atomic.Value(bool) = .init(false),
     run_status: std.atomic.Value(u8) = .init(@intFromEnum(root.StreamRunStatus.stopped)),
@@ -1364,10 +1967,14 @@ pub const Stream = struct {
     last_callback_ns: std.atomic.Value(u64) = .init(0),
     last_callback_interval_ns: std.atomic.Value(u64) = .init(0),
     last_callback_drift_ns: std.atomic.Value(i64) = .init(0),
+    max_callback_interval_ns: std.atomic.Value(u64) = .init(0),
+    max_callback_drift_abs_ns: std.atomic.Value(u64) = .init(0),
 
     pub fn play(self: *Stream) root.AudioError!void {
         if (self.running.load(.seq_cst)) return;
         self.joinStoppedWorker();
+        try self.ensureWakeupPipe();
+        self.drainWakeupPipe();
         if (self.running.swap(true, .seq_cst)) return;
         const prepare_rc = c.snd_pcm_prepare(self.handle);
         if (prepare_rc < 0) {
@@ -1376,6 +1983,11 @@ pub const Stream = struct {
             self.storeRunStatus(root.runStatusFromAudioError(err));
             return err;
         }
+        self.startCaptureIfNeeded() catch |err| {
+            self.running.store(false, .seq_cst);
+            self.storeRunStatus(root.runStatusFromAudioError(err));
+            return err;
+        };
         self.resetCallbackTiming();
         self.clearXrunObservation();
         self.clearObservedBackendError();
@@ -1439,10 +2051,12 @@ pub const Stream = struct {
 
     fn stopWorker(self: *Stream) void {
         self.running.store(false, .seq_cst);
+        self.signalWakeupPipe();
         if (self.thread) |thread| {
             thread.join();
             self.thread = null;
         }
+        self.drainWakeupPipe();
     }
 
     fn joinStoppedWorker(self: *Stream) void {
@@ -1453,16 +2067,23 @@ pub const Stream = struct {
         }
     }
 
+    fn startCaptureIfNeeded(self: *Stream) root.AudioError!void {
+        if (self.direction != .input) return;
+        const rc = c.snd_pcm_start(self.handle);
+        if (rc < 0) return mapAlsaError(rc);
+    }
+
     pub fn bufferSize(self: *Stream) root.AudioError!u32 {
         if (self.buffer_size_frames) |frames| return frames;
         return queryPeriodSize(self.handle);
     }
 
     pub fn diagnostics(self: *Stream) root.AudioError!root.StreamDiagnostics {
-        const status_snapshot = queryPcmStatusSnapshot(self.handle);
+        const status_snapshot = self.queryPcmStatusSnapshot();
 
         var delay_frames: c.snd_pcm_sframes_t = 0;
         const delay_rc = c.snd_pcm_delay(self.handle, &delay_frames);
+        self.observeDiagnosticPcmError(delay_rc);
         const delay_value: ?i64 = if (status_snapshot) |snapshot|
             snapshot.delay_frames
         else if (delay_rc < 0)
@@ -1471,6 +2092,7 @@ pub const Stream = struct {
             @intCast(delay_frames);
 
         const available = c.snd_pcm_avail(self.handle);
+        self.observeDiagnosticPcmError(@intCast(available));
         const available_value: ?u32 = if (status_snapshot) |snapshot|
             snapshot.available_frames
         else if (available < 0)
@@ -1479,12 +2101,16 @@ pub const Stream = struct {
             clampToU32(available);
 
         var timestamp_status: root.LatencyStatus = .measured;
-        const timestamp = streamTimestampStatus(self.handle, &timestamp_status);
-        const latency_status: root.LatencyStatus = if (delay_value != null or available_value != null)
-            timestamp_status
-        else
-            .unavailable;
+        const timestamp = self.streamTimestampStatus(&timestamp_status);
+        const latency_status = diagnosticLatencyStatus(delay_value, available_value);
         const buffer_period_sizes = queryBufferPeriodSizes(self.handle) catch null;
+        const expected_callback_interval_ns: ?u64 = if (buffer_period_sizes) |sizes|
+            root.framesToUnsignedDurationNs(sizes.period_size_frames, self.config.sample_rate)
+        else if (self.buffer_size_frames) |frames|
+            root.framesToUnsignedDurationNs(frames, self.config.sample_rate)
+        else
+            null;
+        const software_params = queryPcmSoftwareParams(self.handle);
         const backend_state = alsaStreamBackendState(c.snd_pcm_state(self.handle));
         self.syncXrunObservationForBackendState(backend_state);
         self.syncStreamErrorObservationForBackendState(backend_state);
@@ -1492,10 +2118,13 @@ pub const Stream = struct {
 
         return .{
             .timestamp = timestamp,
+            .timestamp_status = timestamp_status,
             .run_status = run_status,
             .backend_state = backend_state,
             .buffer_size_frames = if (buffer_period_sizes) |sizes| sizes.buffer_size_frames else null,
             .period_size_frames = if (buffer_period_sizes) |sizes| sizes.period_size_frames else null,
+            .avail_min_frames = if (software_params) |params| params.avail_min_frames else null,
+            .start_threshold_frames = if (software_params) |params| params.start_threshold_frames else null,
             .available_frames = available_value,
             .available_max_frames = if (status_snapshot) |snapshot| snapshot.available_max_frames else null,
             .available_duration_ns = if (available_value) |frames|
@@ -1518,6 +2147,7 @@ pub const Stream = struct {
             .stream_error_count = self.stream_error_count.load(.seq_cst),
             .xrun_count = self.xrun_count.load(.seq_cst),
             .recovery_count = self.recovery_count.load(.seq_cst),
+            .expected_callback_interval_ns = expected_callback_interval_ns,
             .last_callback_interval_ns = if (self.callback_count.load(.seq_cst) > 1)
                 self.last_callback_interval_ns.load(.seq_cst)
             else
@@ -1526,12 +2156,39 @@ pub const Stream = struct {
                 self.last_callback_drift_ns.load(.seq_cst)
             else
                 null,
+            .max_callback_interval_ns = if (self.callback_count.load(.seq_cst) > 1)
+                self.max_callback_interval_ns.load(.seq_cst)
+            else
+                null,
+            .max_callback_drift_abs_ns = if (self.callback_count.load(.seq_cst) > 1)
+                self.max_callback_drift_abs_ns.load(.seq_cst)
+            else
+                null,
         };
+    }
+
+    fn queryPcmStatusSnapshot(self: *Stream) ?PcmStatusSnapshot {
+        var rc: c_int = 0;
+        const snapshot = queryPcmStatusSnapshotError(self.handle, &rc);
+        self.observeDiagnosticPcmError(rc);
+        return snapshot;
+    }
+
+    fn streamTimestampStatus(self: *Stream, latency_status: *root.LatencyStatus) root.StreamInstant {
+        var rc: c_int = 0;
+        const timestamp = streamTimestampStatusError(self.handle, latency_status, &rc);
+        self.observeDiagnosticPcmError(rc);
+        return timestamp;
     }
 
     pub fn deinit(self: *Stream) void {
         _ = self.pause() catch {};
         _ = c.snd_pcm_close(self.handle);
+        self.closeWakeupPipe();
+        if (self.context_active) {
+            releaseAlsaContext();
+            self.context_active = false;
+        }
     }
 
     fn run(self: *Stream) void {
@@ -1552,6 +2209,8 @@ pub const Stream = struct {
             .output_u8, .input_u8 => self.runU8(frames, poll_descriptors),
             .output_i16, .input_i16 => self.runI16(frames, poll_descriptors),
             .output_u16, .input_u16 => self.runU16(frames, poll_descriptors),
+            .output_i24, .input_i24 => self.runI24(frames, poll_descriptors),
+            .output_u24, .input_u24 => self.runU24(frames, poll_descriptors),
             .output_i32, .input_i32 => self.runI32(frames, poll_descriptors),
             .output_u32, .input_u32 => self.runU32(frames, poll_descriptors),
             .output_f64, .input_f64 => self.runF64(frames, poll_descriptors),
@@ -1586,19 +2245,31 @@ pub const Stream = struct {
         if (count < 0) return mapAlsaError(count);
         if (count == 0) return root.AudioError.BackendError;
 
-        const descriptors = try std.heap.c_allocator.alloc(c.struct_pollfd, @intCast(count));
+        const total_count: usize = @as(usize, @intCast(count)) + 1;
+        const descriptors = try std.heap.c_allocator.alloc(c.struct_pollfd, total_count);
         errdefer std.heap.c_allocator.free(descriptors);
 
-        const rc = c.snd_pcm_poll_descriptors(self.handle, descriptors.ptr, @intCast(descriptors.len));
+        descriptors[0] = .{
+            .fd = self.wakeup_read_fd,
+            .events = @intCast(c.POLLIN),
+            .revents = 0,
+        };
+
+        const alsa_descriptors = descriptors[1..];
+        const rc = c.snd_pcm_poll_descriptors(self.handle, alsa_descriptors.ptr, @intCast(alsa_descriptors.len));
         if (rc < 0) return mapAlsaError(rc);
         if (rc == 0) return root.AudioError.BackendError;
+        if (@as(usize, @intCast(rc)) != alsa_descriptors.len) return root.AudioError.BackendError;
         return descriptors;
     }
 
-    fn waitForReady(self: *Stream, poll_descriptors: []c.struct_pollfd) bool {
+    fn waitForReady(self: *Stream, poll_descriptors: []c.struct_pollfd, frames: usize) bool {
         const timeout_ms: c_int = 100;
         const poll_rc = c.poll(poll_descriptors.ptr, @intCast(poll_descriptors.len), timeout_ms);
-        if (poll_rc == 0) return false;
+        if (poll_rc == 0) {
+            self.handlePcmTimeoutState();
+            return false;
+        }
         if (poll_rc < 0) {
             switch (std.c.errno(poll_rc)) {
                 .INTR => return false,
@@ -1612,14 +2283,25 @@ pub const Stream = struct {
             return false;
         }
 
+        if (poll_descriptors[0].revents != 0) {
+            self.drainWakeupPipe();
+            poll_descriptors[0].revents = 0;
+            return false;
+        }
+
         var revents: c_ushort = 0;
+        const alsa_descriptors = poll_descriptors[1..];
         const revents_rc = c.snd_pcm_poll_descriptors_revents(
             self.handle,
-            poll_descriptors.ptr,
-            @intCast(poll_descriptors.len),
+            alsa_descriptors.ptr,
+            @intCast(alsa_descriptors.len),
             &revents,
         );
         if (revents_rc < 0) {
+            if (alsaRcIsInterrupted(revents_rc)) {
+                self.handleInterruptedIo();
+                return false;
+            }
             self.handlePcmIoError(revents_rc);
             return false;
         }
@@ -1632,11 +2314,14 @@ pub const Stream = struct {
             return false;
         }
 
-        return switch (self.direction) {
+        const direction_ready = switch (self.direction) {
             .output => (revents & @as(c_ushort, @intCast(c.POLLOUT))) != 0,
             .input => (revents & @as(c_ushort, @intCast(c.POLLIN))) != 0,
             .duplex, .unknown => revents != 0,
         };
+        if (!direction_ready) return false;
+
+        return self.periodIsAvailable(frames);
     }
 
     fn drainOutputPcm(self: *Stream) root.AudioError!void {
@@ -1653,6 +2338,22 @@ pub const Stream = struct {
             }
             if (rc == -c.EPIPE) self.recordXrun();
             if (rc == -c.EPIPE or rc == -c.ESTRPIPE) {
+                if (rc == -c.ESTRPIPE) {
+                    switch (self.tryResumeSuspendedPcm()) {
+                        .resumed => {
+                            _ = self.recovery_count.fetchAdd(1, .seq_cst);
+                            self.clearObservedBackendError();
+                            continue;
+                        },
+                        .pending => {
+                            waits += 1;
+                            try self.waitForDrainProgress();
+                            continue;
+                        },
+                        .unsupported => {},
+                        .failed => |err| return err,
+                    }
+                }
                 const recovered = c.snd_pcm_recover(self.handle, rc, 1);
                 if (recovered < 0) return mapAlsaError(recovered);
                 _ = self.recovery_count.fetchAdd(1, .seq_cst);
@@ -1685,6 +2386,7 @@ pub const Stream = struct {
             @intCast(poll_descriptors.len),
             &revents,
         );
+        if (alsaRcIsInterrupted(revents_rc)) return;
         if (revents_rc < 0) return mapAlsaError(revents_rc);
 
         const error_events = revents & (@as(c_ushort, @intCast(c.POLLERR)) |
@@ -1699,13 +2401,13 @@ pub const Stream = struct {
 
         switch (self.callback) {
             .output_f32 => |callback| while (self.running.load(.seq_cst)) {
-                if (!self.waitForReady(poll_descriptors)) continue;
+                if (!self.waitForReady(poll_descriptors, frames)) continue;
                 self.runOutputCallbackF32(callback, buffer, frames);
             },
             .input_f32 => |callback| {
                 var filled_frames: usize = 0;
                 while (self.running.load(.seq_cst)) {
-                    if (!self.waitForReady(poll_descriptors)) continue;
+                    if (!self.waitForReady(poll_descriptors, frames)) continue;
                     const read = self.readInputFrames(f32, buffer, filled_frames, frames) orelse {
                         filled_frames = 0;
                         continue;
@@ -1727,13 +2429,13 @@ pub const Stream = struct {
 
         switch (self.callback) {
             .output_i8 => |callback| while (self.running.load(.seq_cst)) {
-                if (!self.waitForReady(poll_descriptors)) continue;
+                if (!self.waitForReady(poll_descriptors, frames)) continue;
                 self.runOutputCallbackI8(callback, buffer, frames);
             },
             .input_i8 => |callback| {
                 var filled_frames: usize = 0;
                 while (self.running.load(.seq_cst)) {
-                    if (!self.waitForReady(poll_descriptors)) continue;
+                    if (!self.waitForReady(poll_descriptors, frames)) continue;
                     const read = self.readInputFrames(i8, buffer, filled_frames, frames) orelse {
                         filled_frames = 0;
                         continue;
@@ -1755,13 +2457,13 @@ pub const Stream = struct {
 
         switch (self.callback) {
             .output_u8 => |callback| while (self.running.load(.seq_cst)) {
-                if (!self.waitForReady(poll_descriptors)) continue;
+                if (!self.waitForReady(poll_descriptors, frames)) continue;
                 self.runOutputCallbackU8(callback, buffer, frames);
             },
             .input_u8 => |callback| {
                 var filled_frames: usize = 0;
                 while (self.running.load(.seq_cst)) {
-                    if (!self.waitForReady(poll_descriptors)) continue;
+                    if (!self.waitForReady(poll_descriptors, frames)) continue;
                     const read = self.readInputFrames(u8, buffer, filled_frames, frames) orelse {
                         filled_frames = 0;
                         continue;
@@ -1783,13 +2485,13 @@ pub const Stream = struct {
 
         switch (self.callback) {
             .output_i16 => |callback| while (self.running.load(.seq_cst)) {
-                if (!self.waitForReady(poll_descriptors)) continue;
+                if (!self.waitForReady(poll_descriptors, frames)) continue;
                 self.runOutputCallbackI16(callback, buffer, frames);
             },
             .input_i16 => |callback| {
                 var filled_frames: usize = 0;
                 while (self.running.load(.seq_cst)) {
-                    if (!self.waitForReady(poll_descriptors)) continue;
+                    if (!self.waitForReady(poll_descriptors, frames)) continue;
                     const read = self.readInputFrames(i16, buffer, filled_frames, frames) orelse {
                         filled_frames = 0;
                         continue;
@@ -1811,13 +2513,13 @@ pub const Stream = struct {
 
         switch (self.callback) {
             .output_u16 => |callback| while (self.running.load(.seq_cst)) {
-                if (!self.waitForReady(poll_descriptors)) continue;
+                if (!self.waitForReady(poll_descriptors, frames)) continue;
                 self.runOutputCallbackU16(callback, buffer, frames);
             },
             .input_u16 => |callback| {
                 var filled_frames: usize = 0;
                 while (self.running.load(.seq_cst)) {
-                    if (!self.waitForReady(poll_descriptors)) continue;
+                    if (!self.waitForReady(poll_descriptors, frames)) continue;
                     const read = self.readInputFrames(u16, buffer, filled_frames, frames) orelse {
                         filled_frames = 0;
                         continue;
@@ -1833,19 +2535,75 @@ pub const Stream = struct {
         }
     }
 
+    fn runI24(self: *Stream, frames: usize, poll_descriptors: []c.struct_pollfd) void {
+        const buffer = self.allocCallbackBuffer(i24, frames) orelse return;
+        defer std.heap.c_allocator.free(buffer);
+
+        switch (self.callback) {
+            .output_i24 => |callback| while (self.running.load(.seq_cst)) {
+                if (!self.waitForReady(poll_descriptors, frames)) continue;
+                self.runOutputCallbackI24(callback, buffer, frames);
+            },
+            .input_i24 => |callback| {
+                var filled_frames: usize = 0;
+                while (self.running.load(.seq_cst)) {
+                    if (!self.waitForReady(poll_descriptors, frames)) continue;
+                    const read = self.readInputFrames(i24, buffer, filled_frames, frames) orelse {
+                        filled_frames = 0;
+                        continue;
+                    };
+                    filled_frames += read;
+                    if (filled_frames >= frames) {
+                        self.deliverInputCallbackI24(callback, buffer, frames);
+                        filled_frames = 0;
+                    }
+                }
+            },
+            else => unreachable,
+        }
+    }
+
+    fn runU24(self: *Stream, frames: usize, poll_descriptors: []c.struct_pollfd) void {
+        const buffer = self.allocCallbackBuffer(u24, frames) orelse return;
+        defer std.heap.c_allocator.free(buffer);
+
+        switch (self.callback) {
+            .output_u24 => |callback| while (self.running.load(.seq_cst)) {
+                if (!self.waitForReady(poll_descriptors, frames)) continue;
+                self.runOutputCallbackU24(callback, buffer, frames);
+            },
+            .input_u24 => |callback| {
+                var filled_frames: usize = 0;
+                while (self.running.load(.seq_cst)) {
+                    if (!self.waitForReady(poll_descriptors, frames)) continue;
+                    const read = self.readInputFrames(u24, buffer, filled_frames, frames) orelse {
+                        filled_frames = 0;
+                        continue;
+                    };
+                    filled_frames += read;
+                    if (filled_frames >= frames) {
+                        self.deliverInputCallbackU24(callback, buffer, frames);
+                        filled_frames = 0;
+                    }
+                }
+            },
+            else => unreachable,
+        }
+    }
+
     fn runI32(self: *Stream, frames: usize, poll_descriptors: []c.struct_pollfd) void {
         const buffer = self.allocCallbackBuffer(i32, frames) orelse return;
         defer std.heap.c_allocator.free(buffer);
 
         switch (self.callback) {
             .output_i32 => |callback| while (self.running.load(.seq_cst)) {
-                if (!self.waitForReady(poll_descriptors)) continue;
+                if (!self.waitForReady(poll_descriptors, frames)) continue;
                 self.runOutputCallbackI32(callback, buffer, frames);
             },
             .input_i32 => |callback| {
                 var filled_frames: usize = 0;
                 while (self.running.load(.seq_cst)) {
-                    if (!self.waitForReady(poll_descriptors)) continue;
+                    if (!self.waitForReady(poll_descriptors, frames)) continue;
                     const read = self.readInputFrames(i32, buffer, filled_frames, frames) orelse {
                         filled_frames = 0;
                         continue;
@@ -1867,13 +2625,13 @@ pub const Stream = struct {
 
         switch (self.callback) {
             .output_u32 => |callback| while (self.running.load(.seq_cst)) {
-                if (!self.waitForReady(poll_descriptors)) continue;
+                if (!self.waitForReady(poll_descriptors, frames)) continue;
                 self.runOutputCallbackU32(callback, buffer, frames);
             },
             .input_u32 => |callback| {
                 var filled_frames: usize = 0;
                 while (self.running.load(.seq_cst)) {
-                    if (!self.waitForReady(poll_descriptors)) continue;
+                    if (!self.waitForReady(poll_descriptors, frames)) continue;
                     const read = self.readInputFrames(u32, buffer, filled_frames, frames) orelse {
                         filled_frames = 0;
                         continue;
@@ -1895,13 +2653,13 @@ pub const Stream = struct {
 
         switch (self.callback) {
             .output_f64 => |callback| while (self.running.load(.seq_cst)) {
-                if (!self.waitForReady(poll_descriptors)) continue;
+                if (!self.waitForReady(poll_descriptors, frames)) continue;
                 self.runOutputCallbackF64(callback, buffer, frames);
             },
             .input_f64 => |callback| {
                 var filled_frames: usize = 0;
                 while (self.running.load(.seq_cst)) {
-                    if (!self.waitForReady(poll_descriptors)) continue;
+                    if (!self.waitForReady(poll_descriptors, frames)) continue;
                     const read = self.readInputFrames(f64, buffer, filled_frames, frames) orelse {
                         filled_frames = 0;
                         continue;
@@ -1977,6 +2735,30 @@ pub const Stream = struct {
         self.writeAllU16(buffer, frames);
     }
 
+    fn runOutputCallbackI24(
+        self: *Stream,
+        callback: root.OutputCallbackI24,
+        buffer: []i24,
+        frames: usize,
+    ) void {
+        self.recordCallbackTiming(frames);
+        @memset(buffer, 0);
+        callback(buffer, self.outputCallbackInfo(), self.userdata);
+        self.writeAllI24(buffer, frames);
+    }
+
+    fn runOutputCallbackU24(
+        self: *Stream,
+        callback: root.OutputCallbackU24,
+        buffer: []u24,
+        frames: usize,
+    ) void {
+        self.recordCallbackTiming(frames);
+        @memset(buffer, 0x800000);
+        callback(buffer, self.outputCallbackInfo(), self.userdata);
+        self.writeAllU24(buffer, frames);
+    }
+
     fn runOutputCallbackI32(
         self: *Stream,
         callback: root.OutputCallbackI32,
@@ -2021,12 +2803,15 @@ pub const Stream = struct {
         target_frames: usize,
     ) ?usize {
         if (filled_frames >= target_frames) return 0;
-        const channels: usize = self.config.channels;
-        const offset = filled_frames * channels;
+        const offset = self.sampleOffset(filled_frames) orelse return null;
+        if (offset >= buffer.len) {
+            self.handleWorkerInvariantError(root.AudioError.InvalidInput);
+            return null;
+        }
         const frames_to_read = target_frames - filled_frames;
         const read = c.snd_pcm_readi(self.handle, buffer[offset..].ptr, @intCast(frames_to_read));
         if (read < 0) {
-            self.handlePcmIoError(@intCast(read));
+            self.handlePcmTransferError(@intCast(read), filled_frames);
             return null;
         }
         if (read == 0) {
@@ -2064,64 +2849,90 @@ pub const Stream = struct {
 
     fn deliverInputCallbackF32(self: *Stream, callback: root.InputCallbackF32, buffer: []f32, frames: usize) void {
         self.recordCallbackTiming(frames);
-        const sample_count = frames * self.config.channels;
-        callback(buffer[0..@min(sample_count, buffer.len)], self.inputCallbackInfo(frames), self.userdata);
+        const samples = self.callbackSlice(f32, buffer, frames) orelse return;
+        callback(samples, self.inputCallbackInfo(frames), self.userdata);
     }
 
     fn deliverInputCallbackI8(self: *Stream, callback: root.InputCallbackI8, buffer: []i8, frames: usize) void {
         self.recordCallbackTiming(frames);
-        const sample_count = frames * self.config.channels;
-        callback(buffer[0..@min(sample_count, buffer.len)], self.inputCallbackInfo(frames), self.userdata);
+        const samples = self.callbackSlice(i8, buffer, frames) orelse return;
+        callback(samples, self.inputCallbackInfo(frames), self.userdata);
     }
 
     fn deliverInputCallbackU8(self: *Stream, callback: root.InputCallbackU8, buffer: []u8, frames: usize) void {
         self.recordCallbackTiming(frames);
-        const sample_count = frames * self.config.channels;
-        callback(buffer[0..@min(sample_count, buffer.len)], self.inputCallbackInfo(frames), self.userdata);
+        const samples = self.callbackSlice(u8, buffer, frames) orelse return;
+        callback(samples, self.inputCallbackInfo(frames), self.userdata);
     }
 
     fn deliverInputCallbackI16(self: *Stream, callback: root.InputCallbackI16, buffer: []i16, frames: usize) void {
         self.recordCallbackTiming(frames);
-        const sample_count = frames * self.config.channels;
-        callback(buffer[0..@min(sample_count, buffer.len)], self.inputCallbackInfo(frames), self.userdata);
+        const samples = self.callbackSlice(i16, buffer, frames) orelse return;
+        callback(samples, self.inputCallbackInfo(frames), self.userdata);
     }
 
     fn deliverInputCallbackU16(self: *Stream, callback: root.InputCallbackU16, buffer: []u16, frames: usize) void {
         self.recordCallbackTiming(frames);
-        const sample_count = frames * self.config.channels;
-        callback(buffer[0..@min(sample_count, buffer.len)], self.inputCallbackInfo(frames), self.userdata);
+        const samples = self.callbackSlice(u16, buffer, frames) orelse return;
+        callback(samples, self.inputCallbackInfo(frames), self.userdata);
+    }
+
+    fn deliverInputCallbackI24(self: *Stream, callback: root.InputCallbackI24, buffer: []i24, frames: usize) void {
+        self.recordCallbackTiming(frames);
+        const samples = self.callbackSlice(i24, buffer, frames) orelse return;
+        callback(samples, self.inputCallbackInfo(frames), self.userdata);
+    }
+
+    fn deliverInputCallbackU24(self: *Stream, callback: root.InputCallbackU24, buffer: []u24, frames: usize) void {
+        self.recordCallbackTiming(frames);
+        const samples = self.callbackSlice(u24, buffer, frames) orelse return;
+        callback(samples, self.inputCallbackInfo(frames), self.userdata);
     }
 
     fn deliverInputCallbackI32(self: *Stream, callback: root.InputCallbackI32, buffer: []i32, frames: usize) void {
         self.recordCallbackTiming(frames);
-        const sample_count = frames * self.config.channels;
-        callback(buffer[0..@min(sample_count, buffer.len)], self.inputCallbackInfo(frames), self.userdata);
+        const samples = self.callbackSlice(i32, buffer, frames) orelse return;
+        callback(samples, self.inputCallbackInfo(frames), self.userdata);
     }
 
     fn deliverInputCallbackU32(self: *Stream, callback: root.InputCallbackU32, buffer: []u32, frames: usize) void {
         self.recordCallbackTiming(frames);
-        const sample_count = frames * self.config.channels;
-        callback(buffer[0..@min(sample_count, buffer.len)], self.inputCallbackInfo(frames), self.userdata);
+        const samples = self.callbackSlice(u32, buffer, frames) orelse return;
+        callback(samples, self.inputCallbackInfo(frames), self.userdata);
     }
 
     fn deliverInputCallbackF64(self: *Stream, callback: root.InputCallbackF64, buffer: []f64, frames: usize) void {
         self.recordCallbackTiming(frames);
-        const sample_count = frames * self.config.channels;
-        callback(buffer[0..@min(sample_count, buffer.len)], self.inputCallbackInfo(frames), self.userdata);
+        const samples = self.callbackSlice(f64, buffer, frames) orelse return;
+        callback(samples, self.inputCallbackInfo(frames), self.userdata);
+    }
+
+    fn callbackSlice(self: *Stream, comptime Sample: type, buffer: []Sample, frames: usize) ?[]Sample {
+        const sample_count = callbackSampleCount(frames, self.config.channels) catch |err| {
+            self.handleWorkerInvariantError(err);
+            return null;
+        };
+        return buffer[0..@min(sample_count, buffer.len)];
+    }
+
+    fn sampleOffset(self: *Stream, frames: usize) ?usize {
+        return callbackSampleCount(frames, self.config.channels) catch |err| {
+            self.handleWorkerInvariantError(err);
+            return null;
+        };
     }
 
     fn writeAllF32(self: *Stream, buffer: []f32, frames: usize) void {
         var frames_written: usize = 0;
-        const channels: usize = self.config.channels;
         while (frames_written < frames and self.running.load(.seq_cst)) {
-            const offset = frames_written * channels;
+            const offset = self.sampleOffset(frames_written) orelse return;
             const written = c.snd_pcm_writei(
                 self.handle,
                 buffer[offset..].ptr,
                 @intCast(frames - frames_written),
             );
             if (written < 0) {
-                self.handlePcmIoError(@intCast(written));
+                self.handlePcmTransferError(@intCast(written), frames_written);
                 return;
             }
             if (written == 0) {
@@ -2134,16 +2945,15 @@ pub const Stream = struct {
 
     fn writeAllI8(self: *Stream, buffer: []i8, frames: usize) void {
         var frames_written: usize = 0;
-        const channels: usize = self.config.channels;
         while (frames_written < frames and self.running.load(.seq_cst)) {
-            const offset = frames_written * channels;
+            const offset = self.sampleOffset(frames_written) orelse return;
             const written = c.snd_pcm_writei(
                 self.handle,
                 buffer[offset..].ptr,
                 @intCast(frames - frames_written),
             );
             if (written < 0) {
-                self.handlePcmIoError(@intCast(written));
+                self.handlePcmTransferError(@intCast(written), frames_written);
                 return;
             }
             if (written == 0) {
@@ -2156,16 +2966,15 @@ pub const Stream = struct {
 
     fn writeAllU8(self: *Stream, buffer: []u8, frames: usize) void {
         var frames_written: usize = 0;
-        const channels: usize = self.config.channels;
         while (frames_written < frames and self.running.load(.seq_cst)) {
-            const offset = frames_written * channels;
+            const offset = self.sampleOffset(frames_written) orelse return;
             const written = c.snd_pcm_writei(
                 self.handle,
                 buffer[offset..].ptr,
                 @intCast(frames - frames_written),
             );
             if (written < 0) {
-                self.handlePcmIoError(@intCast(written));
+                self.handlePcmTransferError(@intCast(written), frames_written);
                 return;
             }
             if (written == 0) {
@@ -2178,16 +2987,15 @@ pub const Stream = struct {
 
     fn writeAllI16(self: *Stream, buffer: []i16, frames: usize) void {
         var frames_written: usize = 0;
-        const channels: usize = self.config.channels;
         while (frames_written < frames and self.running.load(.seq_cst)) {
-            const offset = frames_written * channels;
+            const offset = self.sampleOffset(frames_written) orelse return;
             const written = c.snd_pcm_writei(
                 self.handle,
                 buffer[offset..].ptr,
                 @intCast(frames - frames_written),
             );
             if (written < 0) {
-                self.handlePcmIoError(@intCast(written));
+                self.handlePcmTransferError(@intCast(written), frames_written);
                 return;
             }
             if (written == 0) {
@@ -2200,16 +3008,57 @@ pub const Stream = struct {
 
     fn writeAllU16(self: *Stream, buffer: []u16, frames: usize) void {
         var frames_written: usize = 0;
-        const channels: usize = self.config.channels;
         while (frames_written < frames and self.running.load(.seq_cst)) {
-            const offset = frames_written * channels;
+            const offset = self.sampleOffset(frames_written) orelse return;
             const written = c.snd_pcm_writei(
                 self.handle,
                 buffer[offset..].ptr,
                 @intCast(frames - frames_written),
             );
             if (written < 0) {
-                self.handlePcmIoError(@intCast(written));
+                self.handlePcmTransferError(@intCast(written), frames_written);
+                return;
+            }
+            if (written == 0) {
+                self.handleRecoverableBusy();
+                return;
+            }
+            frames_written += @intCast(written);
+        }
+    }
+
+    fn writeAllI24(self: *Stream, buffer: []i24, frames: usize) void {
+        var frames_written: usize = 0;
+        while (frames_written < frames and self.running.load(.seq_cst)) {
+            const offset = self.sampleOffset(frames_written) orelse return;
+            const written = c.snd_pcm_writei(
+                self.handle,
+                buffer[offset..].ptr,
+                @intCast(frames - frames_written),
+            );
+            if (written < 0) {
+                self.handlePcmTransferError(@intCast(written), frames_written);
+                return;
+            }
+            if (written == 0) {
+                self.handleRecoverableBusy();
+                return;
+            }
+            frames_written += @intCast(written);
+        }
+    }
+
+    fn writeAllU24(self: *Stream, buffer: []u24, frames: usize) void {
+        var frames_written: usize = 0;
+        while (frames_written < frames and self.running.load(.seq_cst)) {
+            const offset = self.sampleOffset(frames_written) orelse return;
+            const written = c.snd_pcm_writei(
+                self.handle,
+                buffer[offset..].ptr,
+                @intCast(frames - frames_written),
+            );
+            if (written < 0) {
+                self.handlePcmTransferError(@intCast(written), frames_written);
                 return;
             }
             if (written == 0) {
@@ -2222,16 +3071,15 @@ pub const Stream = struct {
 
     fn writeAllI32(self: *Stream, buffer: []i32, frames: usize) void {
         var frames_written: usize = 0;
-        const channels: usize = self.config.channels;
         while (frames_written < frames and self.running.load(.seq_cst)) {
-            const offset = frames_written * channels;
+            const offset = self.sampleOffset(frames_written) orelse return;
             const written = c.snd_pcm_writei(
                 self.handle,
                 buffer[offset..].ptr,
                 @intCast(frames - frames_written),
             );
             if (written < 0) {
-                self.handlePcmIoError(@intCast(written));
+                self.handlePcmTransferError(@intCast(written), frames_written);
                 return;
             }
             if (written == 0) {
@@ -2244,16 +3092,15 @@ pub const Stream = struct {
 
     fn writeAllU32(self: *Stream, buffer: []u32, frames: usize) void {
         var frames_written: usize = 0;
-        const channels: usize = self.config.channels;
         while (frames_written < frames and self.running.load(.seq_cst)) {
-            const offset = frames_written * channels;
+            const offset = self.sampleOffset(frames_written) orelse return;
             const written = c.snd_pcm_writei(
                 self.handle,
                 buffer[offset..].ptr,
                 @intCast(frames - frames_written),
             );
             if (written < 0) {
-                self.handlePcmIoError(@intCast(written));
+                self.handlePcmTransferError(@intCast(written), frames_written);
                 return;
             }
             if (written == 0) {
@@ -2266,16 +3113,15 @@ pub const Stream = struct {
 
     fn writeAllF64(self: *Stream, buffer: []f64, frames: usize) void {
         var frames_written: usize = 0;
-        const channels: usize = self.config.channels;
         while (frames_written < frames and self.running.load(.seq_cst)) {
-            const offset = frames_written * channels;
+            const offset = self.sampleOffset(frames_written) orelse return;
             const written = c.snd_pcm_writei(
                 self.handle,
                 buffer[offset..].ptr,
                 @intCast(frames - frames_written),
             );
             if (written < 0) {
-                self.handlePcmIoError(@intCast(written));
+                self.handlePcmTransferError(@intCast(written), frames_written);
                 return;
             }
             if (written == 0) {
@@ -2286,7 +3132,18 @@ pub const Stream = struct {
         }
     }
 
+    fn handleWorkerInvariantError(self: *Stream, err: root.AudioError) void {
+        self.storeRunStatus(root.runStatusFromAudioError(err));
+        emitStreamError(self, err);
+        self.running.store(false, .seq_cst);
+    }
+
     fn handlePcmIoError(self: *Stream, rc: c_int) void {
+        if (alsaRcIsInterrupted(rc)) {
+            self.handleInterruptedIo();
+            return;
+        }
+
         const err = mapAlsaError(rc);
         if (isRecoverableStreamIoError(err)) {
             self.handleRecoverableBusy();
@@ -2305,12 +3162,60 @@ pub const Stream = struct {
         self.recoverPcmError(rc, err);
     }
 
+    fn handlePcmTransferError(self: *Stream, rc: c_int, completed_frames: usize) void {
+        if (transferErrorShouldRecoverAsXrun(rc, completed_frames)) {
+            self.recordXrun();
+            self.recoverPcmError(-c.EPIPE, root.AudioError.Xrun);
+            return;
+        }
+        self.handlePcmIoError(rc);
+    }
+
     fn handlePcmPollError(self: *Stream, revents: c_ushort) void {
         self.handlePcmIoError(pcmPollErrorCode(c.snd_pcm_state(self.handle), revents));
     }
 
+    fn handlePcmTimeoutState(self: *Stream) void {
+        if (pcmTimeoutStateErrorCode(c.snd_pcm_state(self.handle))) |rc| {
+            self.handlePcmIoError(rc);
+        }
+    }
+
+    fn periodIsAvailable(self: *Stream, frames: usize) bool {
+        var available_frames: c.snd_pcm_sframes_t = 0;
+        var delay_frames: c.snd_pcm_sframes_t = 0;
+        const rc = c.snd_pcm_avail_delay(self.handle, &available_frames, &delay_frames);
+        if (rc < 0) {
+            self.handlePcmIoError(rc);
+            return false;
+        }
+
+        const target_frames: c.snd_pcm_sframes_t = @intCast(frames);
+        return available_frames >= target_frames;
+    }
+
     fn recoverPcmError(self: *Stream, rc: c_int, err: root.AudioError) void {
         emitStreamError(self, err);
+        if (rc == -c.ESTRPIPE) {
+            switch (self.tryResumeSuspendedPcm()) {
+                .resumed => {
+                    self.finishSuccessfulRecovery();
+                    return;
+                },
+                .pending => {
+                    self.handleRecoverableBusy();
+                    return;
+                },
+                .unsupported => {},
+                .failed => |resume_err| {
+                    emitStreamError(self, resume_err);
+                    self.storeRunStatus(root.runStatusFromAudioError(resume_err));
+                    self.running.store(false, .seq_cst);
+                    return;
+                },
+            }
+        }
+
         const recovered = c.snd_pcm_recover(self.handle, rc, 1);
         if (recovered < 0) {
             const recovered_err = mapAlsaError(recovered);
@@ -2322,16 +3227,83 @@ pub const Stream = struct {
                 self.running.store(false, .seq_cst);
             }
         } else {
-            _ = self.recovery_count.fetchAdd(1, .seq_cst);
-            self.clearXrunObservation();
-            self.clearObservedBackendError();
-            self.storeRunStatus(.running);
+            self.finishSuccessfulRecovery();
         }
+    }
+
+    fn tryResumeSuspendedPcm(self: *Stream) ResumeResult {
+        return classifyResumeResult(c.snd_pcm_resume(self.handle));
+    }
+
+    fn finishSuccessfulRecovery(self: *Stream) void {
+        self.startCaptureIfNeeded() catch |start_err| {
+            emitStreamError(self, start_err);
+            self.storeRunStatus(root.runStatusFromAudioError(start_err));
+            self.running.store(false, .seq_cst);
+            return;
+        };
+        _ = self.recovery_count.fetchAdd(1, .seq_cst);
+        self.clearXrunObservation();
+        self.clearObservedBackendError();
+        self.storeRunStatus(.running);
     }
 
     fn handleRecoverableBusy(self: *Stream) void {
         if (self.running.load(.seq_cst)) self.storeRunStatus(.running);
         sleepBackoff();
+    }
+
+    fn ensureWakeupPipe(self: *Stream) root.AudioError!void {
+        if (self.wakeup_read_fd >= 0 and self.wakeup_write_fd >= 0) return;
+        var fds: [2]c_int = undefined;
+        const rc = c.pipe(&fds);
+        if (rc < 0) return root.AudioError.ResourceExhausted;
+        errdefer {
+            _ = c.close(fds[0]);
+            _ = c.close(fds[1]);
+        }
+        try configureWakeupPipeFd(fds[0]);
+        try configureWakeupPipeFd(fds[1]);
+        self.wakeup_read_fd = fds[0];
+        self.wakeup_write_fd = fds[1];
+    }
+
+    fn configureWakeupPipeFd(fd: c_int) root.AudioError!void {
+        const flags = c.fcntl(fd, c.F_GETFL, @as(c_int, 0));
+        if (flags < 0) return root.AudioError.ResourceExhausted;
+        if (c.fcntl(fd, c.F_SETFL, flags | c.O_NONBLOCK) < 0) return root.AudioError.ResourceExhausted;
+        if (c.fcntl(fd, c.F_SETFD, c.FD_CLOEXEC) < 0) return root.AudioError.ResourceExhausted;
+    }
+
+    fn signalWakeupPipe(self: *Stream) void {
+        if (self.wakeup_write_fd < 0) return;
+        const byte = [_]u8{1};
+        _ = c.write(self.wakeup_write_fd, &byte, byte.len);
+    }
+
+    fn drainWakeupPipe(self: *Stream) void {
+        if (self.wakeup_read_fd < 0) return;
+        var buffer: [64]u8 = undefined;
+        while (true) {
+            const rc = c.read(self.wakeup_read_fd, &buffer, buffer.len);
+            if (rc > 0) continue;
+            return;
+        }
+    }
+
+    fn closeWakeupPipe(self: *Stream) void {
+        if (self.wakeup_read_fd >= 0) {
+            _ = c.close(self.wakeup_read_fd);
+            self.wakeup_read_fd = -1;
+        }
+        if (self.wakeup_write_fd >= 0) {
+            _ = c.close(self.wakeup_write_fd);
+            self.wakeup_write_fd = -1;
+        }
+    }
+
+    fn handleInterruptedIo(self: *Stream) void {
+        if (self.running.load(.seq_cst)) self.storeRunStatus(.running);
     }
 
     fn emitStreamError(self: *Stream, err: root.AudioError) void {
@@ -2370,13 +3342,30 @@ pub const Stream = struct {
 
     fn syncStreamErrorObservationForBackendState(self: *Stream, backend_state: root.StreamBackendState) void {
         if (observedBackendErrorForBackendState(backend_state)) |observed| {
-            const previous = self.observed_backend_error.swap(@intFromEnum(observed), .seq_cst);
-            if (previous != @intFromEnum(observed)) {
-                if (audioErrorForObservedBackendError(observed)) |err| self.emitStreamError(err);
-            }
+            self.emitObservedBackendErrorOnce(observed);
         } else if (backendStateClearsXrunObservation(backend_state)) {
             self.clearObservedBackendError();
         }
+    }
+
+    fn emitObservedBackendErrorOnce(self: *Stream, observed: ObservedBackendError) void {
+        const previous = self.observed_backend_error.swap(@intFromEnum(observed), .seq_cst);
+        if (previous == @intFromEnum(observed)) return;
+        if (audioErrorForObservedBackendError(observed)) |err| self.emitStreamError(err);
+    }
+
+    fn observeDiagnosticPcmError(self: *Stream, rc: c_int) void {
+        const err = diagnosticPcmError(rc) orelse return;
+        if (isRecoverableStreamIoError(err)) {
+            if (self.running.load(.seq_cst)) self.storeRunStatus(.running);
+            return;
+        }
+        if (err == root.AudioError.Xrun) self.recordXrun();
+        if (observedBackendErrorForAudioError(err)) |observed| self.emitObservedBackendErrorOnce(observed);
+
+        const run_status_value = root.runStatusFromAudioError(err);
+        self.storeRunStatus(run_status_value);
+        if (diagnosticErrorStopsWorker(err)) self.running.store(false, .seq_cst);
     }
 
     fn loadRunStatus(self: *Stream) root.StreamRunStatus {
@@ -2390,7 +3379,7 @@ pub const Stream = struct {
             self.loadRunStatus(),
         );
         self.storeRunStatus(run_status_value);
-        if (run_status_value == .stream_invalidated) self.running.store(false, .seq_cst);
+        if (runStatusStopsWorker(run_status_value)) self.running.store(false, .seq_cst);
         return run_status_value;
     }
 
@@ -2416,6 +3405,8 @@ pub const Stream = struct {
         self.last_callback_ns.store(0, .seq_cst);
         self.last_callback_interval_ns.store(0, .seq_cst);
         self.last_callback_drift_ns.store(0, .seq_cst);
+        self.max_callback_interval_ns.store(0, .seq_cst);
+        self.max_callback_drift_abs_ns.store(0, .seq_cst);
     }
 
     fn recordCallbackTiming(self: *Stream, frames: usize) void {
@@ -2426,12 +3417,15 @@ pub const Stream = struct {
 
         const interval_ns = now_ns - previous_ns;
         self.last_callback_interval_ns.store(interval_ns, .seq_cst);
+        atomicMaxU64(&self.max_callback_interval_ns, interval_ns);
 
         const expected_ns = root.framesToUnsignedDurationNs(
             @intCast(@min(frames, std.math.maxInt(u32))),
             self.config.sample_rate,
         ) orelse return;
-        self.last_callback_drift_ns.store(saturatingDiffI64(interval_ns, expected_ns), .seq_cst);
+        const drift_ns = saturatingDiffI64(interval_ns, expected_ns);
+        self.last_callback_drift_ns.store(drift_ns, .seq_cst);
+        atomicMaxU64(&self.max_callback_drift_abs_ns, absI64AsU64(drift_ns));
     }
 
     fn saturatingU128ToU64(value: u128) u64 {
@@ -2449,6 +3443,10 @@ pub const Stream = struct {
 
     fn tryPromoteWorkerThread(self: *Stream) void {
         if (builtin.os.tag != .linux) {
+            self.storeSchedulingStatus(.unsupported);
+            return;
+        }
+        if (!pcmTypeIsRealtimeEligible(c.snd_pcm_type(self.handle))) {
             self.storeSchedulingStatus(.unsupported);
             return;
         }
@@ -2475,6 +3473,20 @@ pub const Stream = struct {
         });
     }
 };
+
+fn pcmTypeIsRealtimeEligible(pcm_type: c.snd_pcm_type_t) bool {
+    return switch (pcm_type) {
+        c.SND_PCM_TYPE_HW,
+        c.SND_PCM_TYPE_LINEAR,
+        c.SND_PCM_TYPE_ALAW,
+        c.SND_PCM_TYPE_MULAW,
+        c.SND_PCM_TYPE_ADPCM,
+        c.SND_PCM_TYPE_LINEAR_FLOAT,
+        c.SND_PCM_TYPE_IEC958,
+        => true,
+        else => false,
+    };
+}
 
 const BufferPeriodSizes = struct {
     buffer_size_frames: u32,
@@ -2503,12 +3515,59 @@ const PcmStatusSnapshot = struct {
     overrange_frames: u32,
 };
 
+const PcmSoftwareParams = struct {
+    avail_min_frames: u32,
+    start_threshold_frames: u32,
+};
+
+fn queryPcmSoftwareParams(handle: ?*c.snd_pcm_t) ?PcmSoftwareParams {
+    var params: ?*c.snd_pcm_sw_params_t = null;
+    if (c.snd_pcm_sw_params_malloc(&params) < 0) return null;
+    defer c.snd_pcm_sw_params_free(params);
+
+    if (c.snd_pcm_sw_params_current(handle, params) < 0) return null;
+
+    var avail_min_frames: c.snd_pcm_uframes_t = 0;
+    if (c.snd_pcm_sw_params_get_avail_min(params, &avail_min_frames) < 0) return null;
+
+    var start_threshold_frames: c.snd_pcm_uframes_t = 0;
+    if (c.snd_pcm_sw_params_get_start_threshold(params, &start_threshold_frames) < 0) return null;
+
+    return .{
+        .avail_min_frames = clampToU32(avail_min_frames),
+        .start_threshold_frames = clampToU32(start_threshold_frames),
+    };
+}
+
 fn queryPcmStatusSnapshot(handle: ?*c.snd_pcm_t) ?PcmStatusSnapshot {
     var status: ?*c.snd_pcm_status_t = null;
     if (c.snd_pcm_status_malloc(&status) < 0) return null;
     defer c.snd_pcm_status_free(status);
 
     if (c.snd_pcm_status(handle, status) < 0) return null;
+    return .{
+        .delay_frames = @intCast(c.snd_pcm_status_get_delay(status)),
+        .available_frames = clampToU32(c.snd_pcm_status_get_avail(status)),
+        .available_max_frames = clampToU32(c.snd_pcm_status_get_avail_max(status)),
+        .overrange_frames = clampToU32(c.snd_pcm_status_get_overrange(status)),
+    };
+}
+
+fn queryPcmStatusSnapshotError(handle: ?*c.snd_pcm_t, rc_out: *c_int) ?PcmStatusSnapshot {
+    var status: ?*c.snd_pcm_status_t = null;
+    var rc = c.snd_pcm_status_malloc(&status);
+    if (rc < 0) {
+        rc_out.* = rc;
+        return null;
+    }
+    defer c.snd_pcm_status_free(status);
+
+    rc = c.snd_pcm_status(handle, status);
+    if (rc < 0) {
+        rc_out.* = rc;
+        return null;
+    }
+    rc_out.* = 0;
     return .{
         .delay_frames = @intCast(c.snd_pcm_status_get_delay(status)),
         .available_frames = clampToU32(c.snd_pcm_status_get_avail(status)),
@@ -2548,6 +3607,32 @@ fn streamTimestampStatus(handle: ?*c.snd_pcm_t, status: *root.LatencyStatus) roo
         status.* = .estimated;
         return root.StreamInstant.nowMonotonic();
     }
+    if (timestampIsZero(timestamp)) {
+        status.* = .estimated;
+        return root.StreamInstant.nowMonotonic();
+    }
+    if (!pcmTimestampUsesMonotonicClock(handle)) {
+        status.* = .estimated;
+        return root.StreamInstant.nowMonotonic();
+    }
+    status.* = .measured;
+    return timestampToInstant(timestamp);
+}
+
+fn streamTimestampStatusError(handle: ?*c.snd_pcm_t, status: *root.LatencyStatus, rc_out: *c_int) root.StreamInstant {
+    var avail: c.snd_pcm_uframes_t = 0;
+    var timestamp: c.snd_htimestamp_t = undefined;
+    const rc = c.snd_pcm_htimestamp(handle, &avail, &timestamp);
+    if (rc < 0) {
+        rc_out.* = rc;
+        status.* = .estimated;
+        return root.StreamInstant.nowMonotonic();
+    }
+    rc_out.* = 0;
+    if (timestampIsZero(timestamp)) {
+        status.* = .estimated;
+        return root.StreamInstant.nowMonotonic();
+    }
     if (!pcmTimestampUsesMonotonicClock(handle)) {
         status.* = .estimated;
         return root.StreamInstant.nowMonotonic();
@@ -2577,11 +3662,19 @@ fn timestampTypeIsMonotonic(timestamp_type: c.snd_pcm_tstamp_type_t) bool {
         timestamp_type == c.SND_PCM_TSTAMP_TYPE_MONOTONIC_RAW;
 }
 
+fn timestampIsZero(timestamp: c.snd_htimestamp_t) bool {
+    return timestamp.tv_sec == 0 and timestamp.tv_nsec == 0;
+}
+
 fn timestampToInstant(timestamp: c.snd_htimestamp_t) root.StreamInstant {
     return .{
         .nanos = @as(u128, @intCast(timestamp.tv_sec)) * std.time.ns_per_s +
             @as(u128, @intCast(timestamp.tv_nsec)),
     };
+}
+
+fn diagnosticLatencyStatus(delay_frames: ?i64, available_frames: ?u32) root.LatencyStatus {
+    return if (delay_frames != null or available_frames != null) .measured else .unavailable;
 }
 
 fn sleepBackoff() void {
@@ -2649,13 +3742,45 @@ fn probeOpenErrorMeansAvailable(err: root.AudioError) bool {
 }
 
 fn pcmPollErrorCode(state: c.snd_pcm_state_t, revents: c_ushort) c_int {
-    _ = revents;
+    const disconnect_events = @as(c_ushort, @intCast(c.POLLHUP)) |
+        @as(c_ushort, @intCast(c.POLLNVAL));
+    if ((revents & disconnect_events) != 0) return -c.ENODEV;
+
     return switch (state) {
         c.SND_PCM_STATE_XRUN => -c.EPIPE,
         c.SND_PCM_STATE_SUSPENDED => -c.ESTRPIPE,
-        c.SND_PCM_STATE_DISCONNECTED => -c.EIO,
+        c.SND_PCM_STATE_DISCONNECTED => -c.ENODEV,
         else => -c.EIO,
     };
+}
+
+fn pcmTimeoutStateErrorCode(state: c.snd_pcm_state_t) ?c_int {
+    return switch (state) {
+        c.SND_PCM_STATE_XRUN => -c.EPIPE,
+        c.SND_PCM_STATE_SUSPENDED => -c.ESTRPIPE,
+        c.SND_PCM_STATE_DISCONNECTED => -c.ENODEV,
+        else => null,
+    };
+}
+
+const ResumeResult = union(enum) {
+    resumed,
+    pending,
+    unsupported,
+    failed: root.AudioError,
+};
+
+fn classifyResumeResult(rc: c_int) ResumeResult {
+    if (rc >= 0) return .resumed;
+    return switch (-rc) {
+        c.EAGAIN => .pending,
+        c.ENOSYS => .unsupported,
+        else => .{ .failed = mapAlsaError(rc) },
+    };
+}
+
+fn transferErrorShouldRecoverAsXrun(rc: c_int, completed_frames: usize) bool {
+    return rc == -c.EAGAIN and completed_frames > 0;
 }
 
 fn mapAlsaError(rc: c_int) root.AudioError {
@@ -2665,15 +3790,38 @@ fn mapAlsaError(rc: c_int) root.AudioError {
         c.EBUSY, c.EAGAIN => root.AudioError.DeviceBusy,
         c.ENODEV, c.ENOENT, c.ENXIO => root.AudioError.DeviceNotAvailable,
         c.EACCES, c.EPERM => root.AudioError.PermissionDenied,
-        c.EINVAL => root.AudioError.InvalidInput,
+        c.EINVAL => root.AudioError.UnsupportedConfig,
+        c.ENOSYS => root.AudioError.UnsupportedOperation,
         c.ENOMEM => root.AudioError.OutOfMemory,
         c.EIO => root.AudioError.StreamInvalidated,
         else => root.AudioError.BackendError,
     };
 }
 
+fn mapAlsaOpenError(rc: c_int, stream_type: c.snd_pcm_stream_t) root.AudioError {
+    _ = stream_type;
+    const err = mapAlsaError(rc);
+    return if (err == root.AudioError.UnsupportedConfig)
+        root.AudioError.UnsupportedOperation
+    else
+        err;
+}
+
+fn alsaRcIsInterrupted(rc: c_int) bool {
+    return rc == -c.EINTR;
+}
+
 fn isRecoverableStreamIoError(err: root.AudioError) bool {
     return err == root.AudioError.DeviceBusy;
+}
+
+fn diagnosticPcmError(rc: c_int) ?root.AudioError {
+    if (rc >= 0 or alsaRcIsInterrupted(rc)) return null;
+    return mapAlsaError(rc);
+}
+
+fn diagnosticErrorStopsWorker(err: root.AudioError) bool {
+    return isFatalStreamIoError(err);
 }
 
 fn isFatalStreamIoError(err: root.AudioError) bool {
@@ -2682,13 +3830,92 @@ fn isFatalStreamIoError(err: root.AudioError) bool {
         root.AudioError.StreamInvalidated,
         root.AudioError.PermissionDenied,
         root.AudioError.InvalidInput,
+        root.AudioError.UnsupportedConfig,
+        root.AudioError.UnsupportedOperation,
         => true,
         else => false,
     };
 }
 
+fn atomicMaxU64(value: *std.atomic.Value(u64), candidate: u64) void {
+    var current = value.load(.seq_cst);
+    while (candidate > current) {
+        current = value.cmpxchgWeak(current, candidate, .seq_cst, .seq_cst) orelse return;
+    }
+}
+
+fn absI64AsU64(value: i64) u64 {
+    if (value >= 0) return @intCast(value);
+    if (value == std.math.minInt(i64)) return @as(u64, std.math.maxInt(i64)) + 1;
+    return @intCast(-value);
+}
+
 test "ALSA direction parsing handles missing IOID as duplex" {
     try std.testing.expectEqual(root.DeviceDirection.duplex, directionFromIoId(null));
+}
+
+test "ALSA physical PCM direction detection follows playback and capture support" {
+    try std.testing.expectEqual(root.DeviceDirection.duplex, physicalPcmDirection(true, true).?);
+    try std.testing.expectEqual(root.DeviceDirection.output, physicalPcmDirection(true, false).?);
+    try std.testing.expectEqual(root.DeviceDirection.input, physicalPcmDirection(false, true).?);
+    try std.testing.expectEqual(@as(?root.DeviceDirection, null), physicalPcmDirection(false, false));
+}
+
+test "ALSA physical device display names combine card and device labels" {
+    var buffer: [128]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "Built-in Audio, Analog Stereo",
+        try physicalDeviceDisplayName(&buffer, "Built-in Audio", "Analog Stereo"),
+    );
+    try std.testing.expectEqualStrings(
+        "Analog Stereo",
+        try physicalDeviceDisplayName(&buffer, "Card", "Analog Stereo"),
+    );
+    try std.testing.expectEqualStrings(
+        "Built-in Audio",
+        try physicalDeviceDisplayName(&buffer, "Built-in Audio", "Device"),
+    );
+}
+
+test "ALSA physical device id dedupe checks appended devices" {
+    const allocator = std.testing.allocator;
+    var list: std.ArrayList(Device) = .empty;
+    defer {
+        for (list.items) |*device| device.deinit(allocator);
+        list.deinit(allocator);
+    }
+
+    try list.append(allocator, try Device.init(
+        allocator,
+        "hw:CARD=0,DEV=0",
+        "Built-in Audio",
+        "Direct hardware device without any conversions",
+        .duplex,
+    ));
+
+    try std.testing.expect(deviceListContainsId(list.items, "hw:CARD=0,DEV=0"));
+    try std.testing.expect(!deviceListContainsId(list.items, "plughw:CARD=0,DEV=0"));
+}
+
+test "ALSA hint enumeration fallback only treats allocation failures as fatal" {
+    try std.testing.expect(deviceEnumerationErrorIsFatal(root.AudioError.OutOfMemory));
+    try std.testing.expect(deviceEnumerationErrorIsFatal(root.AudioError.ResourceExhausted));
+    try std.testing.expect(!deviceEnumerationErrorIsFatal(root.AudioError.DeviceNotAvailable));
+    try std.testing.expect(!deviceEnumerationErrorIsFatal(root.AudioError.BackendError));
+    try std.testing.expect(!deviceEnumerationErrorIsFatal(root.AudioError.PermissionDenied));
+}
+
+test "ALSA structured metadata classifies physical and virtual aliases" {
+    try std.testing.expect(isAlsaPhysicalAlias("hw:CARD=0,DEV=0"));
+    try std.testing.expect(isAlsaPhysicalAlias("plughw:CARD=0,DEV=0"));
+    try std.testing.expect(!isAlsaPhysicalAlias("default"));
+
+    try std.testing.expectEqual(root.DeviceType.hardware, alsaDeviceType("hw:CARD=0,DEV=0"));
+    try std.testing.expectEqual(root.DeviceType.hardware, alsaDeviceType("plughw:CARD=0,DEV=0"));
+    try std.testing.expectEqual(root.DeviceType.loopback, alsaDeviceType("null"));
+    try std.testing.expectEqual(root.DeviceType.virtual, alsaDeviceType("default"));
+    try std.testing.expectEqual(root.InterfaceType.alsa, alsaInterfaceType("hw:CARD=0,DEV=0"));
+    try std.testing.expectEqual(root.InterfaceType.virtual, alsaInterfaceType("pulse"));
 }
 
 test "ALSA availability policy matches declared device direction" {
@@ -2782,10 +4009,11 @@ test "ALSA default period and total buffer requests stay latency-oriented" {
         .channels = 2,
         .sample_rate = 48_000,
     };
+    try std.testing.expect(usesCpalStyleDefaultBuffering(default_config));
     const default_period = requestedPeriodFrames(default_config);
     try std.testing.expectEqual(@as(c.snd_pcm_uframes_t, 480), default_period);
     try std.testing.expectEqual(
-        @as(c.snd_pcm_uframes_t, 1920),
+        @as(c.snd_pcm_uframes_t, 960),
         requestedTotalBufferFrames(default_config, default_period),
     );
 
@@ -2795,11 +4023,19 @@ test "ALSA default period and total buffer requests stay latency-oriented" {
         .buffer_size = .{ .fixed = 256 },
         .total_buffer_size = .{ .fixed = 1024 },
     };
+    try std.testing.expect(!usesCpalStyleDefaultBuffering(fixed_config));
     try std.testing.expectEqual(@as(c.snd_pcm_uframes_t, 256), requestedPeriodFrames(fixed_config));
     try std.testing.expectEqual(
         @as(c.snd_pcm_uframes_t, 1024),
         requestedTotalBufferFrames(fixed_config, 256),
     );
+
+    const fixed_total_only_config = root.StreamConfig{
+        .channels = 2,
+        .sample_rate = 48_000,
+        .total_buffer_size = .{ .fixed = 2048 },
+    };
+    try std.testing.expect(!usesCpalStyleDefaultBuffering(fixed_total_only_config));
 }
 
 test "ALSA fixed period and total buffer requests reject rounded values" {
@@ -2852,9 +4088,50 @@ test "ALSA committed buffer and period verification enforces fixed requests" {
     }));
 }
 
+test "ALSA committed base hardware params must match requested stream config" {
+    const config_value = root.StreamConfig{
+        .channels = 2,
+        .sample_rate = 48_000,
+    };
+    const expected_format = c.SND_PCM_FORMAT_FLOAT_LE;
+    const committed = CommittedBaseHwParams{
+        .access = c.SND_PCM_ACCESS_RW_INTERLEAVED,
+        .format = expected_format,
+        .channels = 2,
+        .sample_rate = 48_000,
+    };
+
+    try verifyCommittedBaseHwParamsValue(committed, config_value, expected_format);
+
+    try std.testing.expectError(root.AudioError.UnsupportedConfig, verifyCommittedBaseHwParamsValue(.{
+        .access = c.SND_PCM_ACCESS_MMAP_INTERLEAVED,
+        .format = expected_format,
+        .channels = 2,
+        .sample_rate = 48_000,
+    }, config_value, expected_format));
+    try std.testing.expectError(root.AudioError.UnsupportedConfig, verifyCommittedBaseHwParamsValue(.{
+        .access = c.SND_PCM_ACCESS_RW_INTERLEAVED,
+        .format = c.SND_PCM_FORMAT_S16_LE,
+        .channels = 2,
+        .sample_rate = 48_000,
+    }, config_value, expected_format));
+    try std.testing.expectError(root.AudioError.UnsupportedConfig, verifyCommittedBaseHwParamsValue(.{
+        .access = c.SND_PCM_ACCESS_RW_INTERLEAVED,
+        .format = expected_format,
+        .channels = 1,
+        .sample_rate = 48_000,
+    }, config_value, expected_format));
+    try std.testing.expectError(root.AudioError.UnsupportedConfig, verifyCommittedBaseHwParamsValue(.{
+        .access = c.SND_PCM_ACCESS_RW_INTERLEAVED,
+        .format = expected_format,
+        .channels = 2,
+        .sample_rate = 44_100,
+    }, config_value, expected_format));
+}
+
 test "ALSA buildable format table drives open and probe mappings" {
     const formats = buildableAlsaFormats();
-    try std.testing.expectEqual(@as(usize, 8), formats.len);
+    try std.testing.expectEqual(@as(usize, 10), formats.len);
 
     for (formats) |format| {
         try std.testing.expectEqual(format.alsa_format, alsaFormat(format.sample_format).?);
@@ -2865,12 +4142,16 @@ test "ALSA buildable format table drives open and probe mappings" {
     try std.testing.expectEqual(c.SND_PCM_FORMAT_U8, alsaFormat(.u8).?);
     try std.testing.expectEqual(c.SND_PCM_FORMAT_S16_LE, alsaFormat(.i16).?);
     try std.testing.expectEqual(c.SND_PCM_FORMAT_U16_LE, alsaFormat(.u16).?);
+    try std.testing.expectEqual(c.SND_PCM_FORMAT_S24_LE, alsaFormat(.i24).?);
+    try std.testing.expectEqual(c.SND_PCM_FORMAT_U24_LE, alsaFormat(.u24).?);
     try std.testing.expectEqual(c.SND_PCM_FORMAT_S32_LE, alsaFormat(.i32).?);
     try std.testing.expectEqual(c.SND_PCM_FORMAT_U32_LE, alsaFormat(.u32).?);
     try std.testing.expectEqual(c.SND_PCM_FORMAT_FLOAT64_LE, alsaFormat(.f64).?);
 
-    try std.testing.expectEqual(@as(?c.snd_pcm_format_t, null), alsaFormat(.i24));
-    try std.testing.expectEqual(@as(?c.snd_pcm_format_t, null), alsaFormat(.u24));
+    try std.testing.expectEqual(@as(usize, 4), @sizeOf(i24));
+    try std.testing.expectEqual(@as(usize, 4), @sizeOf(u24));
+    try std.testing.expectEqual(@as(usize, 4), @alignOf(i24));
+    try std.testing.expectEqual(@as(usize, 4), @alignOf(u24));
     try std.testing.expectEqual(@as(?c.snd_pcm_format_t, null), alsaFormat(.i64));
     try std.testing.expectEqual(@as(?c.snd_pcm_format_t, null), alsaFormat(.u64));
     try std.testing.expectEqual(@as(?c.snd_pcm_format_t, null), alsaFormat(.dsd_u8));
@@ -2878,6 +4159,44 @@ test "ALSA buildable format table drives open and probe mappings" {
 
 test "ALSA stream PCM open mode is nonblocking from open" {
     try std.testing.expect((streamPcmOpenMode() & c.SND_PCM_NONBLOCK) != 0);
+}
+
+test "ALSA host context lifecycle updates config only at count edges" {
+    try std.testing.expect(contextCountNeedsConfigUpdate(0));
+    try std.testing.expect(!contextCountNeedsConfigUpdate(1));
+    try std.testing.expect(!contextCountNeedsConfigUpdate(8));
+
+    try std.testing.expect(!contextCountNeedsGlobalFree(0));
+    try std.testing.expect(contextCountNeedsGlobalFree(1));
+    try std.testing.expect(!contextCountNeedsGlobalFree(2));
+
+    try std.testing.expectEqual(@as(?usize, 1), nextContextCountAfterRetain(0));
+    try std.testing.expectEqual(@as(?usize, 2), nextContextCountAfterRetain(1));
+    try std.testing.expectEqual(@as(?usize, null), nextContextCountAfterRetain(std.math.maxInt(usize)));
+
+    try std.testing.expectEqual(@as(usize, 0), nextContextCountAfterRelease(0));
+    try std.testing.expectEqual(@as(usize, 0), nextContextCountAfterRelease(1));
+    try std.testing.expectEqual(@as(usize, 1), nextContextCountAfterRelease(2));
+}
+
+test "ALSA realtime scheduling is limited to CPAL-safe PCM types" {
+    try std.testing.expect(pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_HW));
+    try std.testing.expect(pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_LINEAR));
+    try std.testing.expect(pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_ALAW));
+    try std.testing.expect(pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_MULAW));
+    try std.testing.expect(pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_ADPCM));
+    try std.testing.expect(pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_LINEAR_FLOAT));
+    try std.testing.expect(pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_IEC958));
+
+    try std.testing.expect(!pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_NULL));
+    try std.testing.expect(!pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_IOPLUG));
+    try std.testing.expect(!pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_EXTPLUG));
+    try std.testing.expect(!pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_HOOKS));
+    try std.testing.expect(!pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_SOFTVOL));
+    try std.testing.expect(!pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_PLUG));
+    try std.testing.expect(!pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_RATE));
+    try std.testing.expect(!pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_ROUTE));
+    try std.testing.expect(!pcmTypeIsRealtimeEligible(c.SND_PCM_TYPE_COPY));
 }
 
 test "ALSA PCM states map to public backend diagnostics states" {
@@ -2896,7 +4215,7 @@ test "ALSA PCM states map to public backend diagnostics states" {
 test "ALSA terminal backend states map to public run statuses" {
     try std.testing.expectEqual(root.StreamRunStatus.xrun, runStatusForBackendState(.xrun).?);
     try std.testing.expectEqual(root.StreamRunStatus.stream_suspended, runStatusForBackendState(.suspended).?);
-    try std.testing.expectEqual(root.StreamRunStatus.stream_invalidated, runStatusForBackendState(.disconnected).?);
+    try std.testing.expectEqual(root.StreamRunStatus.device_not_available, runStatusForBackendState(.disconnected).?);
     try std.testing.expectEqual(@as(?root.StreamRunStatus, null), runStatusForBackendState(.running));
     try std.testing.expectEqual(@as(?root.StreamRunStatus, null), runStatusForBackendState(.prepared));
 }
@@ -2927,16 +4246,18 @@ test "ALSA diagnostics reconcile stale terminal statuses after non-terminal back
 test "ALSA terminal backend states map to callback audio errors" {
     try std.testing.expectEqual(ObservedBackendError.xrun, observedBackendErrorForBackendState(.xrun).?);
     try std.testing.expectEqual(ObservedBackendError.suspended, observedBackendErrorForBackendState(.suspended).?);
-    try std.testing.expectEqual(ObservedBackendError.invalidated, observedBackendErrorForBackendState(.disconnected).?);
+    try std.testing.expectEqual(ObservedBackendError.unavailable, observedBackendErrorForBackendState(.disconnected).?);
     try std.testing.expectEqual(@as(?ObservedBackendError, null), observedBackendErrorForBackendState(.running));
 
     try std.testing.expectEqual(ObservedBackendError.xrun, observedBackendErrorForAudioError(root.AudioError.Xrun).?);
     try std.testing.expectEqual(ObservedBackendError.suspended, observedBackendErrorForAudioError(root.AudioError.StreamSuspended).?);
+    try std.testing.expectEqual(ObservedBackendError.unavailable, observedBackendErrorForAudioError(root.AudioError.DeviceNotAvailable).?);
     try std.testing.expectEqual(ObservedBackendError.invalidated, observedBackendErrorForAudioError(root.AudioError.StreamInvalidated).?);
     try std.testing.expectEqual(@as(?ObservedBackendError, null), observedBackendErrorForAudioError(root.AudioError.DeviceBusy));
 
     try std.testing.expectEqual(root.AudioError.Xrun, audioErrorForObservedBackendError(.xrun).?);
     try std.testing.expectEqual(root.AudioError.StreamSuspended, audioErrorForObservedBackendError(.suspended).?);
+    try std.testing.expectEqual(root.AudioError.DeviceNotAvailable, audioErrorForObservedBackendError(.unavailable).?);
     try std.testing.expectEqual(root.AudioError.StreamInvalidated, audioErrorForObservedBackendError(.invalidated).?);
     try std.testing.expectEqual(@as(?root.AudioError, null), audioErrorForObservedBackendError(.none));
 }
@@ -2966,14 +4287,55 @@ test "ALSA lifecycle cleanup preserves terminal run statuses" {
     try std.testing.expect(!isTerminalRunStatus(.stopped));
     try std.testing.expect(!isTerminalRunStatus(.running));
     try std.testing.expect(!isTerminalRunStatus(.device_busy));
+
+    try std.testing.expect(runStatusStopsWorker(.stream_invalidated));
+    try std.testing.expect(runStatusStopsWorker(.device_not_available));
+    try std.testing.expect(!runStatusStopsWorker(.xrun));
+    try std.testing.expect(!runStatusStopsWorker(.stream_suspended));
 }
 
 test "ALSA poll error mapping recovers xrun and suspended states before invalidation" {
     const pollerr: c_ushort = @intCast(c.POLLERR);
+    const pollhup: c_ushort = @intCast(c.POLLHUP);
+    const pollnval: c_ushort = @intCast(c.POLLNVAL);
     try std.testing.expectEqual(@as(c_int, -c.EPIPE), pcmPollErrorCode(c.SND_PCM_STATE_XRUN, pollerr));
     try std.testing.expectEqual(@as(c_int, -c.ESTRPIPE), pcmPollErrorCode(c.SND_PCM_STATE_SUSPENDED, pollerr));
-    try std.testing.expectEqual(@as(c_int, -c.EIO), pcmPollErrorCode(c.SND_PCM_STATE_DISCONNECTED, pollerr));
+    try std.testing.expectEqual(@as(c_int, -c.ENODEV), pcmPollErrorCode(c.SND_PCM_STATE_DISCONNECTED, pollerr));
+    try std.testing.expectEqual(@as(c_int, -c.ENODEV), pcmPollErrorCode(c.SND_PCM_STATE_XRUN, pollhup));
+    try std.testing.expectEqual(@as(c_int, -c.ENODEV), pcmPollErrorCode(c.SND_PCM_STATE_SUSPENDED, pollnval));
     try std.testing.expectEqual(@as(c_int, -c.EIO), pcmPollErrorCode(c.SND_PCM_STATE_RUNNING, pollerr));
+    try std.testing.expectEqual(@as(?c_int, -c.EPIPE), pcmTimeoutStateErrorCode(c.SND_PCM_STATE_XRUN));
+    try std.testing.expectEqual(@as(?c_int, -c.ESTRPIPE), pcmTimeoutStateErrorCode(c.SND_PCM_STATE_SUSPENDED));
+    try std.testing.expectEqual(@as(?c_int, -c.ENODEV), pcmTimeoutStateErrorCode(c.SND_PCM_STATE_DISCONNECTED));
+    try std.testing.expectEqual(@as(?c_int, null), pcmTimeoutStateErrorCode(c.SND_PCM_STATE_RUNNING));
+}
+
+test "ALSA suspend resume result classification matches recovery policy" {
+    try std.testing.expectEqual(ResumeResult.resumed, classifyResumeResult(0));
+    try std.testing.expectEqual(ResumeResult.pending, classifyResumeResult(-c.EAGAIN));
+    try std.testing.expectEqual(ResumeResult.unsupported, classifyResumeResult(-c.ENOSYS));
+
+    const failed = classifyResumeResult(-c.EIO);
+    try std.testing.expectEqual(root.AudioError.StreamInvalidated, failed.failed);
+}
+
+test "ALSA configured start threshold matches CPAL-style startup policy" {
+    const sizes = BufferPeriodSizes{ .buffer_size_frames = 1920, .period_size_frames = 480 };
+    try std.testing.expectEqual(
+        @as(c.snd_pcm_uframes_t, 960),
+        configuredStartThresholdFrames(c.SND_PCM_STREAM_PLAYBACK, sizes),
+    );
+    try std.testing.expectEqual(
+        @as(c.snd_pcm_uframes_t, 1),
+        configuredStartThresholdFrames(c.SND_PCM_STREAM_CAPTURE, sizes),
+    );
+    try std.testing.expectEqual(
+        @as(c.snd_pcm_uframes_t, 64),
+        configuredStartThresholdFrames(c.SND_PCM_STREAM_PLAYBACK, .{
+            .buffer_size_frames = 64,
+            .period_size_frames = 64,
+        }),
+    );
 }
 
 test "ALSA control revents only signal on actionable device-change events" {
@@ -3015,6 +4377,17 @@ test "ALSA availability probes skip known noisy external plugins" {
     try std.testing.expect(!isKnownNoisyAvailabilityProbe("pulse"));
 }
 
+test "ALSA default device helper returns null for unavailable directional defaults" {
+    const maybe_device = try defaultDeviceIfAvailable(
+        std.testing.allocator,
+        "jack",
+        "JACK default",
+        "Unavailable JACK probe endpoint",
+        .output,
+    );
+    try std.testing.expect(maybe_device == null);
+}
+
 test "ALSA probe open error classification keeps busy devices available" {
     try std.testing.expect(!probeOpenErrorMeansAvailable(root.AudioError.DeviceNotAvailable));
     try std.testing.expect(!probeOpenErrorMeansAvailable(root.AudioError.StreamInvalidated));
@@ -3043,6 +4416,34 @@ test "ALSA measured stream timestamps require monotonic timestamp types" {
     try std.testing.expect(timestampTypeIsMonotonic(c.SND_PCM_TSTAMP_TYPE_MONOTONIC));
     try std.testing.expect(timestampTypeIsMonotonic(c.SND_PCM_TSTAMP_TYPE_MONOTONIC_RAW));
     try std.testing.expect(!timestampTypeIsMonotonic(c.SND_PCM_TSTAMP_TYPE_GETTIMEOFDAY));
+
+    const timestamp_types = preferredTimestampTypes();
+    try std.testing.expectEqual(@as(c.snd_pcm_tstamp_type_t, c.SND_PCM_TSTAMP_TYPE_MONOTONIC_RAW), timestamp_types[0]);
+    try std.testing.expectEqual(@as(c.snd_pcm_tstamp_type_t, c.SND_PCM_TSTAMP_TYPE_MONOTONIC), timestamp_types[1]);
+
+    try std.testing.expect(timestampIsZero(.{ .tv_sec = 0, .tv_nsec = 0 }));
+    try std.testing.expect(!timestampIsZero(.{ .tv_sec = 1, .tv_nsec = 0 }));
+    try std.testing.expect(!timestampIsZero(.{ .tv_sec = 0, .tv_nsec = 1 }));
+}
+
+test "ALSA diagnostics classify latency independently from timestamp status" {
+    try std.testing.expectEqual(root.LatencyStatus.measured, diagnosticLatencyStatus(0, null));
+    try std.testing.expectEqual(root.LatencyStatus.measured, diagnosticLatencyStatus(null, 0));
+    try std.testing.expectEqual(root.LatencyStatus.measured, diagnosticLatencyStatus(-128, 256));
+    try std.testing.expectEqual(root.LatencyStatus.unavailable, diagnosticLatencyStatus(null, null));
+}
+
+test "ALSA callback drift helpers saturate and keep atomic maxima" {
+    try std.testing.expectEqual(@as(u64, 0), absI64AsU64(0));
+    try std.testing.expectEqual(@as(u64, 42), absI64AsU64(42));
+    try std.testing.expectEqual(@as(u64, 42), absI64AsU64(-42));
+    try std.testing.expectEqual(@as(u64, std.math.maxInt(i64)) + 1, absI64AsU64(std.math.minInt(i64)));
+
+    var value = std.atomic.Value(u64).init(10);
+    atomicMaxU64(&value, 9);
+    try std.testing.expectEqual(@as(u64, 10), value.load(.seq_cst));
+    atomicMaxU64(&value, 25);
+    try std.testing.expectEqual(@as(u64, 25), value.load(.seq_cst));
 }
 
 test "ALSA error mapping distinguishes invalidated and unavailable devices" {
@@ -3052,13 +4453,42 @@ test "ALSA error mapping distinguishes invalidated and unavailable devices" {
     try std.testing.expectEqual(root.AudioError.DeviceBusy, mapAlsaError(-c.EAGAIN));
     try std.testing.expectEqual(root.AudioError.Xrun, mapAlsaError(-c.EPIPE));
     try std.testing.expectEqual(root.AudioError.StreamSuspended, mapAlsaError(-c.ESTRPIPE));
+    try std.testing.expectEqual(root.AudioError.UnsupportedConfig, mapAlsaError(-c.EINVAL));
+    try std.testing.expectEqual(root.AudioError.UnsupportedOperation, mapAlsaError(-c.ENOSYS));
+
+    try std.testing.expectEqual(
+        root.AudioError.UnsupportedOperation,
+        mapAlsaOpenError(-c.EINVAL, c.SND_PCM_STREAM_PLAYBACK),
+    );
+    try std.testing.expectEqual(
+        root.AudioError.UnsupportedOperation,
+        mapAlsaOpenError(-c.EINVAL, c.SND_PCM_STREAM_CAPTURE),
+    );
+    try std.testing.expectEqual(
+        root.AudioError.DeviceNotAvailable,
+        mapAlsaOpenError(-c.ENODEV, c.SND_PCM_STREAM_PLAYBACK),
+    );
 }
 
 test "ALSA stream IO error classes separate recoverable busy from fatal errors" {
+    try std.testing.expect(alsaRcIsInterrupted(-c.EINTR));
+    try std.testing.expect(!alsaRcIsInterrupted(-c.EAGAIN));
+    try std.testing.expect(!transferErrorShouldRecoverAsXrun(-c.EAGAIN, 0));
+    try std.testing.expect(transferErrorShouldRecoverAsXrun(-c.EAGAIN, 1));
+    try std.testing.expect(!transferErrorShouldRecoverAsXrun(-c.EPIPE, 1));
+    try std.testing.expectEqual(@as(?root.AudioError, null), diagnosticPcmError(0));
+    try std.testing.expectEqual(@as(?root.AudioError, null), diagnosticPcmError(-c.EINTR));
+    try std.testing.expectEqual(root.AudioError.Xrun, diagnosticPcmError(-c.EPIPE).?);
+    try std.testing.expectEqual(root.AudioError.StreamInvalidated, diagnosticPcmError(-c.EIO).?);
+    try std.testing.expect(!diagnosticErrorStopsWorker(root.AudioError.Xrun));
+    try std.testing.expect(!diagnosticErrorStopsWorker(root.AudioError.StreamSuspended));
+    try std.testing.expect(diagnosticErrorStopsWorker(root.AudioError.StreamInvalidated));
     try std.testing.expect(isRecoverableStreamIoError(root.AudioError.DeviceBusy));
     try std.testing.expect(!isRecoverableStreamIoError(root.AudioError.Xrun));
     try std.testing.expect(isFatalStreamIoError(root.AudioError.StreamInvalidated));
     try std.testing.expect(isFatalStreamIoError(root.AudioError.DeviceNotAvailable));
+    try std.testing.expect(isFatalStreamIoError(root.AudioError.UnsupportedConfig));
+    try std.testing.expect(isFatalStreamIoError(root.AudioError.UnsupportedOperation));
     try std.testing.expect(!isFatalStreamIoError(root.AudioError.DeviceBusy));
     try std.testing.expect(!isFatalStreamIoError(root.AudioError.Xrun));
 }

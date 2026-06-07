@@ -79,6 +79,20 @@ pub const Device = struct {
         };
     }
 
+    pub fn description(self: Device) root.DeviceDescription {
+        return .{
+            .host = .null,
+            .id = self.id_text,
+            .name = self.name_text,
+            .driver = "cpal-zig null",
+            .device_type = .virtual,
+            .interface_type = .virtual,
+            .direction = self.direction,
+            .address = self.id_text,
+            .extended = self.description_text,
+        };
+    }
+
     pub fn isAvailable(self: Device) bool {
         _ = self;
         return true;
@@ -128,7 +142,7 @@ pub const Device = struct {
 
     fn makeDefaultConfigs(self: Device, allocator: std.mem.Allocator) root.AudioError![]root.SupportedStreamConfigRange {
         _ = self;
-        const configs = try allocator.alloc(root.SupportedStreamConfigRange, 8);
+        const configs = try allocator.alloc(root.SupportedStreamConfigRange, 10);
         configs[0] = .{
             .channels = 2,
             .min_sample_rate = 44_100,
@@ -169,16 +183,30 @@ pub const Device = struct {
             .min_sample_rate = 44_100,
             .max_sample_rate = 48_000,
             .buffer_size = .{ .range = .{ .min = 64, .max = 4096 } },
-            .sample_format = .i32,
+            .sample_format = .i24,
         };
         configs[6] = .{
             .channels = 2,
             .min_sample_rate = 44_100,
             .max_sample_rate = 48_000,
             .buffer_size = .{ .range = .{ .min = 64, .max = 4096 } },
-            .sample_format = .u32,
+            .sample_format = .u24,
         };
         configs[7] = .{
+            .channels = 2,
+            .min_sample_rate = 44_100,
+            .max_sample_rate = 48_000,
+            .buffer_size = .{ .range = .{ .min = 64, .max = 4096 } },
+            .sample_format = .i32,
+        };
+        configs[8] = .{
+            .channels = 2,
+            .min_sample_rate = 44_100,
+            .max_sample_rate = 48_000,
+            .buffer_size = .{ .range = .{ .min = 64, .max = 4096 } },
+            .sample_format = .u32,
+        };
+        configs[9] = .{
             .channels = 2,
             .min_sample_rate = 44_100,
             .max_sample_rate = 48_000,
@@ -194,7 +222,7 @@ pub const Device = struct {
         direction: root.StreamCapabilityDirection,
     ) root.AudioError![]root.StreamCapability {
         _ = self;
-        const capabilities = try allocator.alloc(root.StreamCapability, 8);
+        const capabilities = try allocator.alloc(root.StreamCapability, 10);
         capabilities[0] = .{
             .direction = direction,
             .sample_format = .f32,
@@ -242,7 +270,7 @@ pub const Device = struct {
         };
         capabilities[5] = .{
             .direction = direction,
-            .sample_format = .i32,
+            .sample_format = .i24,
             .channels = .{ .min = 1, .max = 2 },
             .min_sample_rate = 44_100,
             .max_sample_rate = 48_000,
@@ -251,7 +279,7 @@ pub const Device = struct {
         };
         capabilities[6] = .{
             .direction = direction,
-            .sample_format = .u32,
+            .sample_format = .u24,
             .channels = .{ .min = 1, .max = 2 },
             .min_sample_rate = 44_100,
             .max_sample_rate = 48_000,
@@ -259,6 +287,24 @@ pub const Device = struct {
             .total_buffer_size = .{ .range = .{ .min = 256, .max = 16_384 } },
         };
         capabilities[7] = .{
+            .direction = direction,
+            .sample_format = .i32,
+            .channels = .{ .min = 1, .max = 2 },
+            .min_sample_rate = 44_100,
+            .max_sample_rate = 48_000,
+            .buffer_size = .{ .range = .{ .min = 64, .max = 4096 } },
+            .total_buffer_size = .{ .range = .{ .min = 256, .max = 16_384 } },
+        };
+        capabilities[8] = .{
+            .direction = direction,
+            .sample_format = .u32,
+            .channels = .{ .min = 1, .max = 2 },
+            .min_sample_rate = 44_100,
+            .max_sample_rate = 48_000,
+            .buffer_size = .{ .range = .{ .min = 64, .max = 4096 } },
+            .total_buffer_size = .{ .range = .{ .min = 256, .max = 16_384 } },
+        };
+        capabilities[9] = .{
             .direction = direction,
             .sample_format = .f64,
             .channels = .{ .min = 1, .max = 2 },
@@ -479,6 +525,86 @@ pub const Device = struct {
         };
     }
 
+    pub fn buildOutputStreamI24(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.OutputCallbackI24,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        if (!self.direction.supportsOutput()) return root.AudioError.UnsupportedOperation;
+        try config_value.validate();
+        return .{
+            .direction = .output,
+            .config = config_value,
+            .callback = .{ .output_i24 = callback },
+            .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
+        };
+    }
+
+    pub fn buildInputStreamI24(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.InputCallbackI24,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        if (!self.direction.supportsInput()) return root.AudioError.UnsupportedOperation;
+        try config_value.validate();
+        return .{
+            .direction = .input,
+            .config = config_value,
+            .callback = .{ .input_i24 = callback },
+            .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
+        };
+    }
+
+    pub fn buildOutputStreamU24(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.OutputCallbackU24,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        if (!self.direction.supportsOutput()) return root.AudioError.UnsupportedOperation;
+        try config_value.validate();
+        return .{
+            .direction = .output,
+            .config = config_value,
+            .callback = .{ .output_u24 = callback },
+            .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
+        };
+    }
+
+    pub fn buildInputStreamU24(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.InputCallbackU24,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        if (!self.direction.supportsInput()) return root.AudioError.UnsupportedOperation;
+        try config_value.validate();
+        return .{
+            .direction = .input,
+            .config = config_value,
+            .callback = .{ .input_u24 = callback },
+            .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
+        };
+    }
+
     pub fn buildOutputStreamI32(
         self: Device,
         config_value: root.StreamConfig,
@@ -614,6 +740,10 @@ pub const Stream = struct {
         input_i16: root.InputCallbackI16,
         output_u16: root.OutputCallbackU16,
         input_u16: root.InputCallbackU16,
+        output_i24: root.OutputCallbackI24,
+        input_i24: root.InputCallbackI24,
+        output_u24: root.OutputCallbackU24,
+        input_u24: root.InputCallbackU24,
         output_i32: root.OutputCallbackI32,
         input_i32: root.InputCallbackI32,
         output_u32: root.OutputCallbackU32,
@@ -649,6 +779,8 @@ pub const Stream = struct {
             .output_u8, .input_u8 => self.playU8(frames, now),
             .output_i16, .input_i16 => self.playI16(frames, now),
             .output_u16, .input_u16 => self.playU16(frames, now),
+            .output_i24, .input_i24 => self.playI24(frames, now),
+            .output_u24, .input_u24 => self.playU24(frames, now),
             .output_i32, .input_i32 => self.playI32(frames, now),
             .output_u32, .input_u32 => self.playU32(frames, now),
             .output_f64, .input_f64 => self.playF64(frames, now),
@@ -718,6 +850,40 @@ pub const Stream = struct {
                 .playback = now,
             }, self.userdata),
             .input_u16 => |callback| callback(scratch[0..samples], .{
+                .callback = now,
+                .capture = now,
+            }, self.userdata),
+            else => unreachable,
+        }
+    }
+
+    fn playI24(self: *Stream, frames: usize, now: root.StreamInstant) void {
+        var scratch: [4096]i24 = undefined;
+        const samples = @min(scratch.len, frames * self.config.channels);
+        @memset(scratch[0..samples], 0);
+        switch (self.callback) {
+            .output_i24 => |callback| callback(scratch[0..samples], .{
+                .callback = now,
+                .playback = now,
+            }, self.userdata),
+            .input_i24 => |callback| callback(scratch[0..samples], .{
+                .callback = now,
+                .capture = now,
+            }, self.userdata),
+            else => unreachable,
+        }
+    }
+
+    fn playU24(self: *Stream, frames: usize, now: root.StreamInstant) void {
+        var scratch: [4096]u24 = undefined;
+        const samples = @min(scratch.len, frames * self.config.channels);
+        @memset(scratch[0..samples], 0x800000);
+        switch (self.callback) {
+            .output_u24 => |callback| callback(scratch[0..samples], .{
+                .callback = now,
+                .playback = now,
+            }, self.userdata),
+            .input_u24 => |callback| callback(scratch[0..samples], .{
                 .callback = now,
                 .capture = now,
             }, self.userdata),
@@ -803,10 +969,13 @@ pub const Stream = struct {
         const available_frames = try self.bufferSize();
         return .{
             .timestamp = root.StreamInstant.nowMonotonic(),
+            .timestamp_status = .estimated,
             .run_status = self.status(),
             .backend_state = if (self.played) .running else .setup,
             .buffer_size_frames = available_frames,
             .period_size_frames = available_frames,
+            .avail_min_frames = available_frames,
+            .start_threshold_frames = available_frames,
             .available_frames = available_frames,
             .available_max_frames = available_frames,
             .available_duration_ns = root.framesToUnsignedDurationNs(available_frames, self.config.sample_rate),
@@ -820,8 +989,11 @@ pub const Stream = struct {
             .stream_error_count = 0,
             .xrun_count = 0,
             .recovery_count = 0,
+            .expected_callback_interval_ns = root.framesToUnsignedDurationNs(available_frames, self.config.sample_rate),
             .last_callback_interval_ns = null,
             .last_callback_drift_ns = null,
+            .max_callback_interval_ns = null,
+            .max_callback_drift_abs_ns = null,
         };
     }
 

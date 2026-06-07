@@ -17,6 +17,19 @@ pub fn main(init: std.process.Init) !void {
     defer monitor.deinit();
     try stdout.print("Native device-change signal support: {any}\n", .{host.supportsDeviceChangeSignals()});
     try stdout.print("Initial device snapshot: {d} devices\n", .{monitor.snapshot().len});
+    if (monitor.snapshot().len > 0) {
+        const first = monitor.snapshot()[0];
+        if (try host.deviceById(allocator, first.id, first.direction)) |device_value| {
+            var device = device_value;
+            defer device.deinit(allocator);
+            const info = device.info();
+            try stdout.print("Rehydrated snapshot endpoint: {s} [{s}], available={any}\n", .{
+                info.id,
+                @tagName(info.direction),
+                device.isAvailable(),
+            });
+        }
+    }
 
     const changes = try monitor.waitForChanges(host, 500 * std.time.ns_per_ms);
     defer cpal.freeDeviceSnapshotChanges(allocator, changes);

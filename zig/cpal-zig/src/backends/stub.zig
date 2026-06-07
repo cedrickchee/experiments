@@ -67,6 +67,20 @@ pub const Device = struct {
         };
     }
 
+    pub fn description(self: Device) root.DeviceDescription {
+        return .{
+            .host = self.host_id,
+            .id = self.id_text,
+            .name = self.name_text,
+            .driver = self.host_id.name(),
+            .device_type = .unknown,
+            .interface_type = .unknown,
+            .direction = self.direction,
+            .address = self.id_text,
+            .extended = "Backend extension point is not implemented yet",
+        };
+    }
+
     pub fn isAvailable(self: Device) bool {
         _ = self;
         return false;
@@ -275,6 +289,74 @@ pub const Device = struct {
         self: Device,
         config_value: root.StreamConfig,
         callback: root.InputCallbackU16,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        _ = self;
+        _ = config_value;
+        _ = callback;
+        _ = userdata;
+        _ = error_callback;
+        _ = error_userdata;
+        return root.AudioError.UnsupportedOperation;
+    }
+
+    pub fn buildOutputStreamI24(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.OutputCallbackI24,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        _ = self;
+        _ = config_value;
+        _ = callback;
+        _ = userdata;
+        _ = error_callback;
+        _ = error_userdata;
+        return root.AudioError.UnsupportedOperation;
+    }
+
+    pub fn buildInputStreamI24(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.InputCallbackI24,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        _ = self;
+        _ = config_value;
+        _ = callback;
+        _ = userdata;
+        _ = error_callback;
+        _ = error_userdata;
+        return root.AudioError.UnsupportedOperation;
+    }
+
+    pub fn buildOutputStreamU24(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.OutputCallbackU24,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        _ = self;
+        _ = config_value;
+        _ = callback;
+        _ = userdata;
+        _ = error_callback;
+        _ = error_userdata;
+        return root.AudioError.UnsupportedOperation;
+    }
+
+    pub fn buildInputStreamU24(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.InputCallbackU24,
         userdata: ?*anyopaque,
         error_callback: ?root.StreamErrorCallback,
         error_userdata: ?*anyopaque,

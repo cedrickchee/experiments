@@ -124,25 +124,21 @@ pub fn main(init: std.process.Init) !void {
     };
     defer output_device.deinit(allocator);
 
-    const output_negotiated = try output_device.negotiateOutputConfig(allocator, .{
-        .sample_formats = &.{.f32},
-        .channels = 2,
-        .sample_rate = 48_000,
-    });
-    const output_config = output_negotiated.config;
-    const input_config = (try input_device.negotiateInputConfig(allocator, .{
-        .sample_formats = &.{.f32},
-        .channels = output_config.channels,
-        .sample_rate = output_config.sample_rate,
-    })).config;
+    const output_capabilities = try output_device.supportedOutputCapabilities(allocator);
+    const input_capabilities = try input_device.supportedInputCapabilities(allocator);
+    const shared_config = (try cpal.negotiateSharedStreamCapability(
+        output_capabilities,
+        input_capabilities,
+        .{ .sample_formats = &.{.f32} },
+    )).config;
 
-    const ring_samples = @as(usize, output_config.sample_rate) * output_config.channels;
+    const ring_samples = @as(usize, shared_config.sample_rate) * shared_config.channels;
     const ring = try allocator.alloc(f32, ring_samples);
     @memset(ring, 0);
     var state = FeedbackState{ .ring = ring };
 
     var input_stream = try input_device.buildInputStreamF32(
-        input_config,
+        shared_config,
         FeedbackState.inputCallback,
         &state,
         FeedbackState.errorCallback,
@@ -151,7 +147,7 @@ pub fn main(init: std.process.Init) !void {
     defer input_stream.deinit();
 
     var output_stream = try output_device.buildOutputStreamF32(
-        output_config,
+        shared_config,
         FeedbackState.outputCallback,
         &state,
         FeedbackState.errorCallback,
@@ -163,7 +159,7 @@ pub fn main(init: std.process.Init) !void {
     try output_stream.play();
     try stdout.print(
         "Monitoring {s} -> {s}: {d} channels at {d} Hz.\n",
-        .{ input_device.info().name, output_device.info().name, output_config.channels, output_config.sample_rate },
+        .{ input_device.info().name, output_device.info().name, shared_config.channels, shared_config.sample_rate },
     );
 
     var tick: usize = 0;

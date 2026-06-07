@@ -9,41 +9,56 @@ input/output streams. The first implementation target is ALSA on Linux.
 ## Status
 
 - ALSA host boundary: implemented for Linux
-- ALSA device enumeration: PCM hint enumeration with input/output/duplex labels
-  plus ALSA description metadata
-- ALSA config probing: interleaved `f32`, `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, and `f64`
-  playback/capture ranges when accepted by ALSA
+- ALSA device enumeration: PCM hint enumeration for virtual/plugin devices plus
+  physical card probing that adds `hw:CARD=...,DEV=...` and
+  `plughw:CARD=...,DEV=...` aliases with input/output/duplex labels and ALSA
+  description metadata; hint enumeration failures fall back to physical probing
+  and the default PCM when possible
+- Device metadata: simple `DeviceInfo` plus CPAL-like structured
+  `DeviceDescription` fields for name, driver, device type, interface type,
+  direction, address, and extended backend text where available
+- ALSA config probing: interleaved `f32`, `i8`, `u8`, `i16`, `u16`, `i24`, `u24`, `i32`, `u32`, and `f64`
+  playback/capture ranges when accepted by ALSA, including optional channel
+  ranges on compatibility config ranges
 - ALSA rich capability probing: channel min/max, preferred channel candidates,
   sample-rate ranges, period-size ranges, and total buffer-size ranges for
   buildable formats
-- ALSA output streams: `f32`, `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, and `f64` callback streams using ALSA poll descriptors plus `snd_pcm_writei`
-- ALSA input streams: `f32`, `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, and `f64` callback streams using ALSA poll descriptors plus `snd_pcm_readi`
+- ALSA output streams: `f32`, `i8`, `u8`, `i16`, `u16`, `i24`, `u24`, `i32`, `u32`, and `f64` callback streams using ALSA poll descriptors plus `snd_pcm_writei`
+- ALSA input streams: `f32`, `i8`, `u8`, `i16`, `u16`, `i24`, `u24`, `i32`, `u32`, and `f64` callback streams using ALSA poll descriptors plus `snd_pcm_readi`
 - Config negotiation: helper APIs for choosing format, channel count, sample
   rate, callback period size, and total buffer size from probed ranges or rich
-  capabilities while preserving total-buffer ranges on supported configs
+  capabilities while preserving channel and total-buffer ranges on supported
+  configs; shared input/output negotiation can choose one format/channel/rate
+  config supported by both devices
 - Hotplug foundation: host device snapshots, snapshot tracking, snapshot
   diffing with previous metadata and availability for changed devices, metadata
-  fingerprints, ALSA control-event wakeups when available, and bounded polling
-  fallback
+  fingerprints, endpoint-aware availability lookup with canonical ALSA hardware
+  PCM id matching, ALSA control-event wakeups when available, and bounded
+  polling fallback
+- Device lookup: `Host.deviceById()` rehydrates a directional device by backend
+  id, using the same canonical ALSA hardware PCM id matching as snapshots
 - Device availability probes: `Device.isAvailable()` checks whether a backend
   device still appears present/openable for its declared direction
 - Stream lifecycle: `play`, `pause`, `drain`, `isRunning`, `status`, `deinit`,
   buffer-size query, xrun recovery, stream error callbacks, and ALSA-backed
   timestamps
+- ALSA stream setup: post-commit verification of access, sample format,
+  channel count, sample rate, period size, and total buffer size
 - Stream builders: explicit typed builders such as `buildOutputStreamF32` plus
   Zig comptime generic builders such as `buildOutputStream(f32, ...)`
 - Device invalidation: unavailable/disconnected PCM errors map to
   `DeviceNotAvailable` or `StreamInvalidated` and stop stream workers cleanly;
   ALSA suspend events surface as `StreamSuspended` and use ALSA recovery before
   invalidation
-- Stream diagnostics: timestamp status, total buffer and period frames,
-  available/available-max frames, signed delay frames/durations, direct
-  non-negative latency duration, capture overrange, callback cadence/drift,
-  stream error/xrun/recovery counters, run status,
-  backend PCM state, and worker scheduling status
+- Stream diagnostics: separate timestamp and latency status, total buffer and
+  period frames, ALSA software thresholds, available/available-max frames,
+  signed delay frames/durations, direct non-negative latency duration, capture
+  overrange, expected callback interval, callback cadence/drift, peak callback
+  interval and absolute drift observations, stream error/xrun/recovery counters,
+  run status, backend PCM state, and worker scheduling status
 - ALSA stream setup: explicit `snd_pcm_hw_params`/`snd_pcm_sw_params`
-  negotiation with latency-oriented defaults and optional fixed total-buffer
-  requests
+  negotiation with CPAL-style default two-pass period/buffer setup and optional
+  fixed total-buffer requests
 - CoreAudio, WASAPI, JACK, PulseAudio: extension stubs
 
 See `IMPLEMENTATION_LOG.md` for design notes and gaps.
@@ -69,11 +84,15 @@ zig build
 ./zig-out/bin/record_input
 ./zig-out/bin/input_output_feedback
 ./zig-out/bin/open_f32_streams
+./zig-out/bin/open_i8_streams
 ./zig-out/bin/open_u8_streams
 ./zig-out/bin/open_i16_streams
 ./zig-out/bin/open_u16_streams
+./zig-out/bin/open_i24_streams
+./zig-out/bin/open_u24_streams
 ./zig-out/bin/open_i32_streams
 ./zig-out/bin/open_u32_streams
+./zig-out/bin/open_f64_streams
 ./zig-out/bin/print_rich_capabilities
 ./zig-out/bin/hotplug_snapshot
 ./zig-out/bin/stream_diagnostics

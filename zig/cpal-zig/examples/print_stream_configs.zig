@@ -17,8 +17,13 @@ fn printConfigs(
     const info = device.info();
     try stdout.print("Default {s} device: {s} ({s})\n", .{ label, info.id, info.name });
     for (configs) |config| {
-        try stdout.print("  {d} channels, {d}-{d} Hz, {s}, buffer=", .{
-            config.channels,
+        const channels = config.channelRange();
+        if (channels.min == channels.max) {
+            try stdout.print("  {d} channels", .{config.channels});
+        } else {
+            try stdout.print("  channels={d}-{d} representative={d}", .{ channels.min, channels.max, config.channels });
+        }
+        try stdout.print(", {d}-{d} Hz, {s}, buffer=", .{
             config.min_sample_rate,
             config.max_sample_rate,
             @tagName(config.sample_format),

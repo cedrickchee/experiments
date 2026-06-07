@@ -41,6 +41,10 @@ pub const OutputCallbackI16 = stream.OutputCallbackI16;
 pub const InputCallbackI16 = stream.InputCallbackI16;
 pub const OutputCallbackU16 = stream.OutputCallbackU16;
 pub const InputCallbackU16 = stream.InputCallbackU16;
+pub const OutputCallbackI24 = stream.OutputCallbackI24;
+pub const InputCallbackI24 = stream.InputCallbackI24;
+pub const OutputCallbackU24 = stream.OutputCallbackU24;
+pub const InputCallbackU24 = stream.InputCallbackU24;
 pub const OutputCallbackI32 = stream.OutputCallbackI32;
 pub const InputCallbackI32 = stream.InputCallbackI32;
 pub const OutputCallbackU32 = stream.OutputCallbackU32;
@@ -50,6 +54,7 @@ pub const InputCallbackF64 = stream.InputCallbackF64;
 pub const StreamErrorCallback = stream.StreamErrorCallback;
 pub const negotiateStreamConfig = config.negotiateStreamConfig;
 pub const negotiateStreamCapability = config.negotiateStreamCapability;
+pub const negotiateSharedStreamCapability = config.negotiateSharedStreamCapability;
 pub const defaultSampleFormatPreferences = config.defaultSampleFormatPreferences;
 
 pub const AudioError = error{
@@ -114,6 +119,54 @@ pub const DeviceDirection = enum {
     }
 };
 
+pub const DeviceType = enum {
+    unknown,
+    hardware,
+    virtual,
+    loopback,
+};
+
+pub const InterfaceType = enum {
+    unknown,
+    alsa,
+    builtin,
+    pci,
+    usb,
+    virtual,
+};
+
+pub const DeviceDescription = struct {
+    host: HostId,
+    id: []const u8,
+    name: []const u8,
+    manufacturer: ?[]const u8 = null,
+    driver: ?[]const u8 = null,
+    device_type: DeviceType = .unknown,
+    interface_type: InterfaceType = .unknown,
+    direction: DeviceDirection,
+    address: ?[]const u8 = null,
+    extended: ?[]const u8 = null,
+
+    pub fn supportsInput(self: DeviceDescription) bool {
+        return self.direction.supportsInput();
+    }
+
+    pub fn supportsOutput(self: DeviceDescription) bool {
+        return self.direction.supportsOutput();
+    }
+
+    pub fn metadataFingerprint(self: DeviceDescription) u64 {
+        return deviceMetadataFingerprint(
+            self.host,
+            self.id,
+            self.name,
+            self.extended,
+            self.direction,
+            true,
+        );
+    }
+};
+
 pub const DeviceInfo = struct {
     host: HostId,
     id: []const u8,
@@ -123,6 +176,17 @@ pub const DeviceInfo = struct {
 
     pub fn metadataFingerprint(self: DeviceInfo) u64 {
         return deviceMetadataFingerprint(self.host, self.id, self.name, self.description, self.direction, true);
+    }
+
+    pub fn structuredDescription(self: DeviceInfo) DeviceDescription {
+        return .{
+            .host = self.host,
+            .id = self.id,
+            .name = self.name,
+            .direction = self.direction,
+            .address = self.id,
+            .extended = self.description,
+        };
     }
 };
 
@@ -154,7 +218,7 @@ pub const DeviceSnapshotEntry = struct {
     }
 
     pub fn sameIdentity(self: DeviceSnapshotEntry, other: DeviceSnapshotEntry) bool {
-        return self.host == other.host and std.mem.eql(u8, self.id, other.id);
+        return self.host == other.host and snapshotDeviceIdsEqual(self.host, self.id, other.id);
     }
 
     pub fn sameEndpoint(self: DeviceSnapshotEntry, other: DeviceSnapshotEntry) bool {
@@ -182,7 +246,7 @@ fn deviceMetadataFingerprint(
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(@tagName(host));
     hasher.update(&.{0});
-    hasher.update(id);
+    hashSnapshotDeviceId(&hasher, host, id);
     hasher.update(&.{0});
     hasher.update(name);
     hasher.update(&.{0});
@@ -193,6 +257,111 @@ fn deviceMetadataFingerprint(
     hasher.update(if (available) "available" else "unavailable");
     const value = hasher.final();
     return if (value == 0) 1 else value;
+}
+
+fn snapshotDeviceIdsEqual(host: HostId, left: []const u8, right: []const u8) bool {
+    if (std.mem.eql(u8, left, right)) return true;
+    return switch (host) {
+        .alsa => alsaPcmIdsEquivalent(left, right),
+        else => false,
+    };
+}
+
+fn deviceInfoMatchesEndpoint(
+    info_value: DeviceInfo,
+    host: HostId,
+    id: []const u8,
+    direction: DeviceDirection,
+) bool {
+    return info_value.host == host and
+        info_value.direction == direction and
+        snapshotDeviceIdsEqual(host, info_value.id, id);
+}
+
+fn hashSnapshotDeviceId(hasher: *std.hash.Wyhash, host: HostId, id: []const u8) void {
+    switch (host) {
+        .alsa => if (canonicalAlsaPcmId(id)) |canonical| {
+            hasher.update("alsa-pcm");
+            hasher.update(&.{0});
+            hasher.update(canonical.prefix);
+            hasher.update(&.{0});
+            hasher.update(canonical.card);
+            hasher.update(&.{0});
+            hasher.update(std.mem.asBytes(&canonical.device));
+            return;
+        },
+        else => {},
+    }
+    hasher.update(id);
+}
+
+const CanonicalAlsaPcmId = struct {
+    prefix: []const u8,
+    card: []const u8,
+    device: u32,
+};
+
+fn alsaPcmIdsEquivalent(left: []const u8, right: []const u8) bool {
+    const left_canonical = canonicalAlsaPcmId(left) orelse return false;
+    const right_canonical = canonicalAlsaPcmId(right) orelse return false;
+    return std.mem.eql(u8, left_canonical.prefix, right_canonical.prefix) and
+        std.mem.eql(u8, left_canonical.card, right_canonical.card) and
+        left_canonical.device == right_canonical.device;
+}
+
+fn canonicalAlsaPcmId(id: []const u8) ?CanonicalAlsaPcmId {
+    const prefix_end = std.mem.indexOfScalar(u8, id, ':') orelse return null;
+    const prefix = trimPcmToken(id[0..prefix_end]);
+    const rest = trimPcmToken(id[prefix_end + 1 ..]);
+    if (prefix.len == 0 or rest.len == 0) return null;
+
+    const first_comma = std.mem.indexOfScalar(u8, rest, ',');
+    const card_part = trimPcmToken(if (first_comma) |index| rest[0..index] else rest);
+    if (card_part.len == 0) return null;
+
+    if (std.mem.indexOfScalar(u8, card_part, '=') != null) {
+        return canonicalAlsaKeyedPcmId(prefix, rest);
+    }
+
+    const device_part = trimPcmToken(if (first_comma) |index| rest[index + 1 ..] else "0");
+    if (std.mem.indexOfScalar(u8, device_part, ',') != null) return null;
+    return .{
+        .prefix = prefix,
+        .card = card_part,
+        .device = std.fmt.parseUnsigned(u32, device_part, 10) catch return null,
+    };
+}
+
+fn canonicalAlsaKeyedPcmId(prefix: []const u8, rest: []const u8) ?CanonicalAlsaPcmId {
+    var card: ?[]const u8 = null;
+    var device: ?u32 = null;
+    var tokens = std.mem.splitScalar(u8, rest, ',');
+    while (tokens.next()) |raw_token| {
+        const token = trimPcmToken(raw_token);
+        const equals_index = std.mem.indexOfScalar(u8, token, '=') orelse return null;
+        const key = trimPcmToken(token[0..equals_index]);
+        const value = trimPcmToken(token[equals_index + 1 ..]);
+        if (value.len == 0) return null;
+        if (std.mem.eql(u8, key, "CARD")) {
+            if (card != null) return null;
+            card = value;
+        } else if (std.mem.eql(u8, key, "DEV")) {
+            if (device != null) return null;
+            device = std.fmt.parseUnsigned(u32, value, 10) catch return null;
+        } else {
+            return null;
+        }
+    }
+
+    return .{
+        .prefix = prefix,
+        .card = card orelse return null,
+        .device = device orelse 0,
+    };
+}
+
+fn trimPcmToken(value: []const u8) []const u8 {
+    return std.mem.trim(u8, value, " \t");
 }
 
 fn monotonicNowNs() u64 {
@@ -214,6 +383,25 @@ fn sleepNs(ns: u64) void {
 pub const DeviceSnapshot = struct {
     allocator: std.mem.Allocator,
     items: []DeviceSnapshotEntry,
+
+    pub fn findEndpoint(
+        self: DeviceSnapshot,
+        host: HostId,
+        id: []const u8,
+        direction: DeviceDirection,
+    ) ?*const DeviceSnapshotEntry {
+        return findSnapshotEndpoint(self.items, host, id, direction);
+    }
+
+    pub fn containsAvailableEndpoint(
+        self: DeviceSnapshot,
+        host: HostId,
+        id: []const u8,
+        direction: DeviceDirection,
+    ) bool {
+        const item = self.findEndpoint(host, id, direction) orelse return false;
+        return item.available;
+    }
 
     pub fn deinit(self: *DeviceSnapshot) void {
         for (self.items) |*item| item.deinit(self.allocator);
@@ -243,6 +431,24 @@ pub const DeviceSnapshotTracker = struct {
 
     pub fn snapshot(self: DeviceSnapshotTracker) []const DeviceSnapshotEntry {
         return self.current.items;
+    }
+
+    pub fn findEndpoint(
+        self: DeviceSnapshotTracker,
+        host: HostId,
+        id: []const u8,
+        direction: DeviceDirection,
+    ) ?*const DeviceSnapshotEntry {
+        return self.current.findEndpoint(host, id, direction);
+    }
+
+    pub fn containsAvailableEndpoint(
+        self: DeviceSnapshotTracker,
+        host: HostId,
+        id: []const u8,
+        direction: DeviceDirection,
+    ) bool {
+        return self.current.containsAvailableEndpoint(host, id, direction);
     }
 
     pub fn refresh(self: *DeviceSnapshotTracker, host: Host) AudioError![]DeviceSnapshotChange {
@@ -277,6 +483,24 @@ pub const DeviceSnapshotMonitor = struct {
 
     pub fn snapshot(self: DeviceSnapshotMonitor) []const DeviceSnapshotEntry {
         return self.tracker.snapshot();
+    }
+
+    pub fn findEndpoint(
+        self: DeviceSnapshotMonitor,
+        host: HostId,
+        id: []const u8,
+        direction: DeviceDirection,
+    ) ?*const DeviceSnapshotEntry {
+        return self.tracker.findEndpoint(host, id, direction);
+    }
+
+    pub fn containsAvailableEndpoint(
+        self: DeviceSnapshotMonitor,
+        host: HostId,
+        id: []const u8,
+        direction: DeviceDirection,
+    ) bool {
+        return self.tracker.containsAvailableEndpoint(host, id, direction);
     }
 
     pub fn poll(self: *DeviceSnapshotMonitor, host: Host) AudioError![]DeviceSnapshotChange {
@@ -434,9 +658,19 @@ fn hasDuplicateSnapshotIdentity(items: []const DeviceSnapshotEntry, needle: Devi
     return false;
 }
 
-fn findSnapshotEntry(items: []const DeviceSnapshotEntry, needle: DeviceSnapshotEntry) ?DeviceSnapshotEntry {
-    for (items) |item| {
-        if (item.sameIdentity(needle)) return item;
+fn findSnapshotEndpoint(
+    items: []const DeviceSnapshotEntry,
+    host: HostId,
+    id: []const u8,
+    direction: DeviceDirection,
+) ?*const DeviceSnapshotEntry {
+    for (items) |*item| {
+        if (item.host == host and
+            snapshotDeviceIdsEqual(host, item.id, id) and
+            item.direction == direction)
+        {
+            return item;
+        }
     }
     return null;
 }
@@ -462,6 +696,14 @@ pub const Device = union(HostId) {
             .alsa => |device| device.info(),
             .coreaudio, .wasapi, .jack, .pulseaudio => |device| device.info(),
             .null => |device| device.info(),
+        };
+    }
+
+    pub fn description(self: Device) DeviceDescription {
+        return switch (self) {
+            .alsa => |device| device.description(),
+            .coreaudio, .wasapi, .jack, .pulseaudio => |device| device.description(),
+            .null => |device| device.description(),
         };
     }
 
@@ -585,6 +827,8 @@ pub const Device = union(HostId) {
             .u8 => self.buildOutputStreamU8(config_value, callback, userdata, error_callback, error_userdata),
             .i16 => self.buildOutputStreamI16(config_value, callback, userdata, error_callback, error_userdata),
             .u16 => self.buildOutputStreamU16(config_value, callback, userdata, error_callback, error_userdata),
+            .i24 => self.buildOutputStreamI24(config_value, callback, userdata, error_callback, error_userdata),
+            .u24 => self.buildOutputStreamU24(config_value, callback, userdata, error_callback, error_userdata),
             .i32 => self.buildOutputStreamI32(config_value, callback, userdata, error_callback, error_userdata),
             .u32 => self.buildOutputStreamU32(config_value, callback, userdata, error_callback, error_userdata),
             .f64 => self.buildOutputStreamF64(config_value, callback, userdata, error_callback, error_userdata),
@@ -609,6 +853,8 @@ pub const Device = union(HostId) {
             .u8 => self.buildInputStreamU8(config_value, callback, userdata, error_callback, error_userdata),
             .i16 => self.buildInputStreamI16(config_value, callback, userdata, error_callback, error_userdata),
             .u16 => self.buildInputStreamU16(config_value, callback, userdata, error_callback, error_userdata),
+            .i24 => self.buildInputStreamI24(config_value, callback, userdata, error_callback, error_userdata),
+            .u24 => self.buildInputStreamU24(config_value, callback, userdata, error_callback, error_userdata),
             .i32 => self.buildInputStreamI32(config_value, callback, userdata, error_callback, error_userdata),
             .u32 => self.buildInputStreamU32(config_value, callback, userdata, error_callback, error_userdata),
             .f64 => self.buildInputStreamF64(config_value, callback, userdata, error_callback, error_userdata),
@@ -748,6 +994,66 @@ pub const Device = union(HostId) {
             .alsa => |device| .{ .alsa = try device.buildInputStreamU16(config_value, callback, userdata, error_callback, error_userdata) },
             .coreaudio, .wasapi, .jack, .pulseaudio => |device| .{ .stub = try device.buildInputStreamU16(config_value, callback, userdata, error_callback, error_userdata) },
             .null => |device| .{ .null = try device.buildInputStreamU16(config_value, callback, userdata, error_callback, error_userdata) },
+        };
+    }
+
+    pub fn buildOutputStreamI24(
+        self: Device,
+        config_value: StreamConfig,
+        callback: OutputCallbackI24,
+        userdata: ?*anyopaque,
+        error_callback: ?StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) AudioError!stream.Stream {
+        return switch (self) {
+            .alsa => |device| .{ .alsa = try device.buildOutputStreamI24(config_value, callback, userdata, error_callback, error_userdata) },
+            .coreaudio, .wasapi, .jack, .pulseaudio => |device| .{ .stub = try device.buildOutputStreamI24(config_value, callback, userdata, error_callback, error_userdata) },
+            .null => |device| .{ .null = try device.buildOutputStreamI24(config_value, callback, userdata, error_callback, error_userdata) },
+        };
+    }
+
+    pub fn buildInputStreamI24(
+        self: Device,
+        config_value: StreamConfig,
+        callback: InputCallbackI24,
+        userdata: ?*anyopaque,
+        error_callback: ?StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) AudioError!stream.Stream {
+        return switch (self) {
+            .alsa => |device| .{ .alsa = try device.buildInputStreamI24(config_value, callback, userdata, error_callback, error_userdata) },
+            .coreaudio, .wasapi, .jack, .pulseaudio => |device| .{ .stub = try device.buildInputStreamI24(config_value, callback, userdata, error_callback, error_userdata) },
+            .null => |device| .{ .null = try device.buildInputStreamI24(config_value, callback, userdata, error_callback, error_userdata) },
+        };
+    }
+
+    pub fn buildOutputStreamU24(
+        self: Device,
+        config_value: StreamConfig,
+        callback: OutputCallbackU24,
+        userdata: ?*anyopaque,
+        error_callback: ?StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) AudioError!stream.Stream {
+        return switch (self) {
+            .alsa => |device| .{ .alsa = try device.buildOutputStreamU24(config_value, callback, userdata, error_callback, error_userdata) },
+            .coreaudio, .wasapi, .jack, .pulseaudio => |device| .{ .stub = try device.buildOutputStreamU24(config_value, callback, userdata, error_callback, error_userdata) },
+            .null => |device| .{ .null = try device.buildOutputStreamU24(config_value, callback, userdata, error_callback, error_userdata) },
+        };
+    }
+
+    pub fn buildInputStreamU24(
+        self: Device,
+        config_value: StreamConfig,
+        callback: InputCallbackU24,
+        userdata: ?*anyopaque,
+        error_callback: ?StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) AudioError!stream.Stream {
+        return switch (self) {
+            .alsa => |device| .{ .alsa = try device.buildInputStreamU24(config_value, callback, userdata, error_callback, error_userdata) },
+            .coreaudio, .wasapi, .jack, .pulseaudio => |device| .{ .stub = try device.buildInputStreamU24(config_value, callback, userdata, error_callback, error_userdata) },
+            .null => |device| .{ .null = try device.buildInputStreamU24(config_value, callback, userdata, error_callback, error_userdata) },
         };
     }
 
@@ -935,6 +1241,31 @@ pub const Host = union(HostId) {
         return .{ .allocator = allocator, .items = try list.toOwnedSlice(allocator) };
     }
 
+    pub fn deviceById(
+        self: Host,
+        allocator: std.mem.Allocator,
+        device_id: []const u8,
+        direction: DeviceDirection,
+    ) AudioError!?Device {
+        var devices_value = try self.devices(allocator);
+        errdefer devices_value.deinit();
+
+        for (devices_value.items, 0..) |device, index| {
+            if (!deviceInfoMatchesEndpoint(device.info(), self.id(), device_id, direction)) continue;
+
+            const found = device;
+            for (devices_value.items, 0..) |*other, other_index| {
+                if (other_index != index) other.deinit(devices_value.allocator);
+            }
+            devices_value.allocator.free(devices_value.items);
+            devices_value.items = &.{};
+            return found;
+        }
+
+        devices_value.deinit();
+        return null;
+    }
+
     pub fn defaultOutputDevice(self: Host, allocator: std.mem.Allocator) AudioError!?Device {
         return switch (self) {
             .alsa => |host| if (try host.defaultOutputDevice(allocator)) |device| .{ .alsa = device } else null,
@@ -1093,6 +1424,36 @@ test "null host reports no native device change signal support" {
     try std.testing.expect(!try host.waitForDeviceChangeSignal(allocator, 0));
 }
 
+test "host deviceById returns a refreshed directional device" {
+    const allocator = std.testing.allocator;
+    var host = try hostFromId(.null);
+    defer host.deinit(allocator);
+
+    var device = (try host.deviceById(allocator, "null:input", .input)).?;
+    defer device.deinit(allocator);
+    const info_value = device.info();
+
+    try std.testing.expectEqual(HostId.null, info_value.host);
+    try std.testing.expectEqualStrings("null:input", info_value.id);
+    try std.testing.expectEqual(DeviceDirection.input, info_value.direction);
+    try std.testing.expect(try host.deviceById(allocator, "null:input", .output) == null);
+    try std.testing.expect(try host.deviceById(allocator, "missing", .input) == null);
+}
+
+test "device endpoint matching uses ALSA canonical PCM ids" {
+    const info_value = DeviceInfo{
+        .host = .alsa,
+        .id = "hw:CARD=0,DEV=0",
+        .name = "Hardware output",
+        .direction = .output,
+    };
+
+    try std.testing.expect(deviceInfoMatchesEndpoint(info_value, .alsa, "hw:0", .output));
+    try std.testing.expect(deviceInfoMatchesEndpoint(info_value, .alsa, "hw:0,0", .output));
+    try std.testing.expect(!deviceInfoMatchesEndpoint(info_value, .alsa, "hw:0", .input));
+    try std.testing.expect(!deviceInfoMatchesEndpoint(info_value, .alsa, "plughw:0", .output));
+}
+
 test "host identifiers expose stable and display names" {
     try std.testing.expectEqualStrings("alsa", HostId.alsa.stableName());
     try std.testing.expectEqualStrings("ALSA", HostId.alsa.name());
@@ -1114,6 +1475,56 @@ test "device snapshot identity can distinguish directional endpoints" {
     try std.testing.expect(output.sameIdentity(input));
     try std.testing.expect(!output.sameEndpoint(input));
     try std.testing.expect(output.sameEndpoint(renamed_output));
+}
+
+test "ALSA snapshot identity canonicalizes simple PCM ids" {
+    const hw_short = DeviceSnapshotEntry{ .host = .alsa, .id = "hw:0", .name = "Card", .direction = .output };
+    const hw_unkeyed = DeviceSnapshotEntry{ .host = .alsa, .id = "hw:0,0", .name = "Card", .direction = .output };
+    const hw_keyed_card = DeviceSnapshotEntry{ .host = .alsa, .id = "hw:CARD=0", .name = "Card", .direction = .output };
+    const hw_keyed = DeviceSnapshotEntry{ .host = .alsa, .id = "hw:CARD=0,DEV=0", .name = "Card", .direction = .output };
+    const plughw_keyed = DeviceSnapshotEntry{ .host = .alsa, .id = "plughw:CARD=0,DEV=0", .name = "Card", .direction = .output };
+    const extra_param = DeviceSnapshotEntry{ .host = .alsa, .id = "hw:CARD=0,DEV=0,SUBDEV=1", .name = "Card", .direction = .output };
+
+    try std.testing.expect(hw_short.sameIdentity(hw_unkeyed));
+    try std.testing.expect(hw_short.sameIdentity(hw_keyed_card));
+    try std.testing.expect(hw_short.sameIdentity(hw_keyed));
+    try std.testing.expect(!hw_short.sameIdentity(plughw_keyed));
+    try std.testing.expect(!hw_short.sameIdentity(extra_param));
+    try std.testing.expectEqual(hw_short.fingerprint(), hw_keyed.fingerprint());
+}
+
+test "device snapshots find directional endpoints without identity ambiguity" {
+    const allocator = std.testing.allocator;
+    var entries = [_]DeviceSnapshotEntry{
+        .{ .host = .alsa, .id = "default", .name = "Default output", .direction = .output, .available = false },
+        .{ .host = .alsa, .id = "default", .name = "Default input", .direction = .input, .available = true },
+    };
+    const snapshot = DeviceSnapshot{ .allocator = allocator, .items = entries[0..] };
+
+    const output = snapshot.findEndpoint(.alsa, "default", .output).?;
+    const input = snapshot.findEndpoint(.alsa, "default", .input).?;
+
+    try std.testing.expectEqual(DeviceDirection.output, output.direction);
+    try std.testing.expectEqual(DeviceDirection.input, input.direction);
+    try std.testing.expect(!snapshot.containsAvailableEndpoint(.alsa, "default", .output));
+    try std.testing.expect(snapshot.containsAvailableEndpoint(.alsa, "default", .input));
+    try std.testing.expect(snapshot.findEndpoint(.alsa, "default", .duplex) == null);
+}
+
+test "device snapshots find ALSA endpoints by canonical PCM id" {
+    const allocator = std.testing.allocator;
+    var entries = [_]DeviceSnapshotEntry{
+        .{ .host = .alsa, .id = "hw:CARD=0,DEV=0", .name = "Hardware output", .direction = .output },
+        .{ .host = .alsa, .id = "hw:CARD=0,DEV=1", .name = "Hardware input", .direction = .input },
+    };
+    const snapshot = DeviceSnapshot{ .allocator = allocator, .items = entries[0..] };
+
+    const output = snapshot.findEndpoint(.alsa, "hw:0", .output).?;
+    const input = snapshot.findEndpoint(.alsa, "hw:0,1", .input).?;
+
+    try std.testing.expectEqualStrings("Hardware output", output.name);
+    try std.testing.expectEqualStrings("Hardware input", input.name);
+    try std.testing.expect(snapshot.findEndpoint(.alsa, "plughw:0", .output) == null);
 }
 
 test "device snapshot diff reports added removed and changed entries" {
@@ -1216,4 +1627,19 @@ test "device snapshot diff keeps duplicate directional device ids distinct" {
     try std.testing.expectEqualStrings("default", changes[0].item.id);
     try std.testing.expectEqual(DeviceDirection.output, changes[0].item.direction);
     try std.testing.expect(changes[0].previous == null);
+}
+
+test "device snapshot diff treats canonical ALSA PCM ids as stable endpoints" {
+    const allocator = std.testing.allocator;
+    const before = [_]DeviceSnapshotEntry{
+        .{ .host = .alsa, .id = "hw:0", .name = "Hardware output", .direction = .output },
+    };
+    const after = [_]DeviceSnapshotEntry{
+        .{ .host = .alsa, .id = "hw:CARD=0,DEV=0", .name = "Hardware output", .direction = .output },
+    };
+
+    const changes = try diffDeviceSnapshots(allocator, &before, &after);
+    defer freeDeviceSnapshotChanges(allocator, changes);
+
+    try std.testing.expectEqual(@as(usize, 0), changes.len);
 }

@@ -139,11 +139,20 @@ pub const SupportedStreamConfig = struct {
 
 pub const SupportedStreamConfigRange = struct {
     channels: u16,
+    channel_range: ?ChannelRange = null,
     min_sample_rate: u32,
     max_sample_rate: u32,
     buffer_size: SupportedBufferSize,
     total_buffer_size: SupportedBufferSize = .unknown,
     sample_format: SampleFormat,
+
+    pub fn channelRange(self: SupportedStreamConfigRange) ChannelRange {
+        return self.channel_range orelse .{ .min = self.channels, .max = self.channels };
+    }
+
+    pub fn supportsChannels(self: SupportedStreamConfigRange, channels: u16) bool {
+        return self.channelRange().supports(channels);
+    }
 
     pub fn containsRate(self: SupportedStreamConfigRange, sample_rate: u32) bool {
         return sample_rate >= self.min_sample_rate and sample_rate <= self.max_sample_rate;
@@ -181,7 +190,7 @@ pub const SupportedStreamConfigRange = struct {
     }
 };
 
-const default_sample_format_preferences = [_]SampleFormat{ .f32, .i16, .i32, .u16, .u32, .f64, .i8, .u8 };
+const default_sample_format_preferences = [_]SampleFormat{ .f32, .i16, .i32, .i24, .u16, .u32, .u24, .f64, .i8, .u8 };
 
 pub fn defaultSampleFormatPreferences() []const SampleFormat {
     return &default_sample_format_preferences;
@@ -251,6 +260,7 @@ pub const StreamCapability = struct {
     pub fn representativeConfigRange(self: StreamCapability) SupportedStreamConfigRange {
         return .{
             .channels = self.channels.representative(),
+            .channel_range = self.channels,
             .min_sample_rate = self.min_sample_rate,
             .max_sample_rate = self.max_sample_rate,
             .buffer_size = self.buffer_size,
@@ -308,6 +318,12 @@ pub const NegotiatedStreamConfig = struct {
     config: StreamConfig,
 };
 
+pub const NegotiatedSharedStreamConfig = struct {
+    output_supported: SupportedStreamConfig,
+    input_supported: SupportedStreamConfig,
+    config: StreamConfig,
+};
+
 pub fn negotiateStreamConfig(
     ranges: []const SupportedStreamConfigRange,
     request: StreamConfigRequest,
@@ -317,15 +333,16 @@ pub fn negotiateStreamConfig(
         for (ranges) |range| {
             if (range.sample_format != sample_format) continue;
             if (request.channels) |channels| {
-                if (range.channels != channels) continue;
+                if (!range.supportsChannels(channels)) continue;
             }
             if (!range.supportsBufferSize(request.buffer_size)) continue;
             if (!range.supportsTotalBufferSize(request.total_buffer_size)) continue;
 
-            const supported = if (request.sample_rate) |sample_rate|
+            var supported = if (request.sample_rate) |sample_rate|
                 range.withSampleRate(sample_rate) orelse continue
             else
                 range.withStandardSampleRate();
+            if (request.channels) |channels| supported.channels = channels;
 
             return .{
                 .supported = supported,
@@ -334,6 +351,95 @@ pub fn negotiateStreamConfig(
         }
     }
     return root.AudioError.UnsupportedConfig;
+}
+
+pub fn negotiateSharedStreamCapability(
+    output_capabilities: []const StreamCapability,
+    input_capabilities: []const StreamCapability,
+    request: StreamConfigRequest,
+) root.AudioError!NegotiatedSharedStreamConfig {
+    try request.validate();
+    for (request.sample_formats) |sample_format| {
+        for (output_capabilities) |output_capability| {
+            if (output_capability.direction != .output or output_capability.sample_format != sample_format) continue;
+            if (!output_capability.supportsBufferSize(request.buffer_size)) continue;
+            if (!output_capability.supportsTotalBufferSize(request.total_buffer_size)) continue;
+
+            for (input_capabilities) |input_capability| {
+                if (input_capability.direction != .input or input_capability.sample_format != sample_format) continue;
+                if (!input_capability.supportsBufferSize(request.buffer_size)) continue;
+                if (!input_capability.supportsTotalBufferSize(request.total_buffer_size)) continue;
+
+                const channels = sharedCapabilityChannels(output_capability, input_capability, request.channels) orelse continue;
+                const sample_rate = sharedCapabilitySampleRate(output_capability, input_capability, request.sample_rate) orelse continue;
+
+                const config_value: StreamConfig = .{
+                    .channels = channels,
+                    .sample_rate = sample_rate,
+                    .buffer_size = request.buffer_size,
+                    .total_buffer_size = request.total_buffer_size,
+                };
+                try config_value.validate();
+
+                return .{
+                    .output_supported = .{
+                        .channels = channels,
+                        .sample_rate = sample_rate,
+                        .buffer_size = output_capability.buffer_size,
+                        .total_buffer_size = output_capability.total_buffer_size,
+                        .sample_format = sample_format,
+                    },
+                    .input_supported = .{
+                        .channels = channels,
+                        .sample_rate = sample_rate,
+                        .buffer_size = input_capability.buffer_size,
+                        .total_buffer_size = input_capability.total_buffer_size,
+                        .sample_format = sample_format,
+                    },
+                    .config = config_value,
+                };
+            }
+        }
+    }
+    return root.AudioError.UnsupportedConfig;
+}
+
+fn sharedCapabilityChannels(
+    output_capability: StreamCapability,
+    input_capability: StreamCapability,
+    requested_channels: ?u16,
+) ?u16 {
+    if (requested_channels) |channels| {
+        if (output_capability.channels.supports(channels) and input_capability.channels.supports(channels)) {
+            return channels;
+        }
+        return null;
+    }
+
+    var candidates_buffer: [16]u16 = undefined;
+    const output_candidates = output_capability.channels.preferredCandidates(&candidates_buffer);
+    for (output_candidates) |channels| {
+        if (input_capability.channels.supports(channels)) return channels;
+    }
+    return null;
+}
+
+fn sharedCapabilitySampleRate(
+    output_capability: StreamCapability,
+    input_capability: StreamCapability,
+    requested_sample_rate: ?u32,
+) ?u32 {
+    if (requested_sample_rate) |rate| {
+        if (output_capability.containsRate(rate) and input_capability.containsRate(rate)) return rate;
+        return null;
+    }
+
+    const min_rate = @max(output_capability.min_sample_rate, input_capability.min_sample_rate);
+    const max_rate = @min(output_capability.max_sample_rate, input_capability.max_sample_rate);
+    if (min_rate > max_rate) return null;
+    if (48_000 >= min_rate and 48_000 <= max_rate) return 48_000;
+    if (44_100 >= min_rate and 44_100 <= max_rate) return 44_100;
+    return max_rate;
 }
 
 pub fn negotiateStreamCapability(
@@ -440,6 +546,35 @@ test "negotiation honors format, rate, channels, and fixed buffer" {
     try std.testing.expectEqual(SupportedBufferSize{ .range = .{ .min = 512, .max = 2048 } }, negotiated.supported.total_buffer_size);
 }
 
+test "negotiation honors optional channel ranges on simple configs" {
+    const ranges = [_]SupportedStreamConfigRange{.{
+        .channels = 2,
+        .channel_range = .{ .min = 1, .max = 8 },
+        .min_sample_rate = 44_100,
+        .max_sample_rate = 96_000,
+        .buffer_size = .unknown,
+        .sample_format = .f32,
+    }};
+
+    try std.testing.expect(ranges[0].supportsChannels(1));
+    try std.testing.expect(ranges[0].supportsChannels(8));
+    try std.testing.expect(!ranges[0].supportsChannels(10));
+    try std.testing.expectEqual(ChannelRange{ .min = 1, .max = 8 }, ranges[0].channelRange());
+
+    const negotiated = try negotiateStreamConfig(&ranges, .{
+        .sample_formats = &.{.f32},
+        .channels = 6,
+        .sample_rate = 48_000,
+    });
+    try std.testing.expectEqual(@as(u16, 6), negotiated.config.channels);
+    try std.testing.expectEqual(@as(u16, 6), negotiated.supported.channels);
+    try std.testing.expectError(root.AudioError.UnsupportedConfig, negotiateStreamConfig(&ranges, .{
+        .sample_formats = &.{.f32},
+        .channels = 10,
+        .sample_rate = 48_000,
+    }));
+}
+
 test "negotiation rejects unsupported fixed period or total buffer" {
     const ranges = [_]SupportedStreamConfigRange{.{
         .channels = 2,
@@ -496,4 +631,96 @@ test "capability negotiation supports channel ranges" {
     try std.testing.expectEqual(SampleFormat.i16, negotiated.supported.sample_format);
     try std.testing.expectEqual(SupportedBufferSize{ .range = .{ .min = 256, .max = 4096 } }, negotiated.supported.total_buffer_size);
     try std.testing.expectEqual(SupportedBufferSize{ .range = .{ .min = 256, .max = 4096 } }, capabilities[0].total_buffer_size);
+}
+
+test "shared capability negotiation picks common stereo 48 kHz config" {
+    const output_capabilities = [_]StreamCapability{.{
+        .direction = .output,
+        .sample_format = .f32,
+        .channels = .{ .min = 1, .max = 8 },
+        .min_sample_rate = 44_100,
+        .max_sample_rate = 96_000,
+        .buffer_size = .{ .range = .{ .min = 64, .max = 1024 } },
+        .total_buffer_size = .{ .range = .{ .min = 256, .max = 4096 } },
+    }};
+    const input_capabilities = [_]StreamCapability{.{
+        .direction = .input,
+        .sample_format = .f32,
+        .channels = .{ .min = 2, .max = 2 },
+        .min_sample_rate = 8_000,
+        .max_sample_rate = 48_000,
+        .buffer_size = .{ .range = .{ .min = 128, .max = 2048 } },
+        .total_buffer_size = .{ .range = .{ .min = 512, .max = 8192 } },
+    }};
+
+    const negotiated = try negotiateSharedStreamCapability(&output_capabilities, &input_capabilities, .{
+        .sample_formats = &.{.f32},
+        .buffer_size = .{ .fixed = 256 },
+        .total_buffer_size = .{ .fixed = 1024 },
+    });
+
+    try std.testing.expectEqual(@as(u16, 2), negotiated.config.channels);
+    try std.testing.expectEqual(@as(u32, 48_000), negotiated.config.sample_rate);
+    try std.testing.expectEqual(SampleFormat.f32, negotiated.output_supported.sample_format);
+    try std.testing.expectEqual(SampleFormat.f32, negotiated.input_supported.sample_format);
+    try std.testing.expectEqual(BufferSize{ .fixed = 256 }, negotiated.config.buffer_size);
+    try std.testing.expectEqual(BufferSize{ .fixed = 1024 }, negotiated.config.total_buffer_size);
+}
+
+test "shared capability negotiation follows format and fallback preferences" {
+    const output_capabilities = [_]StreamCapability{
+        .{
+            .direction = .output,
+            .sample_format = .i16,
+            .channels = .{ .min = 4, .max = 8 },
+            .min_sample_rate = 32_000,
+            .max_sample_rate = 44_000,
+            .buffer_size = .unknown,
+        },
+        .{
+            .direction = .output,
+            .sample_format = .f32,
+            .channels = .{ .min = 1, .max = 2 },
+            .min_sample_rate = 44_100,
+            .max_sample_rate = 48_000,
+            .buffer_size = .unknown,
+        },
+    };
+    const input_capabilities = [_]StreamCapability{
+        .{
+            .direction = .input,
+            .sample_format = .f32,
+            .channels = .{ .min = 1, .max = 1 },
+            .min_sample_rate = 44_100,
+            .max_sample_rate = 44_100,
+            .buffer_size = .unknown,
+        },
+        .{
+            .direction = .input,
+            .sample_format = .i16,
+            .channels = .{ .min = 4, .max = 4 },
+            .min_sample_rate = 30_000,
+            .max_sample_rate = 44_000,
+            .buffer_size = .unknown,
+        },
+    };
+
+    const negotiated = try negotiateSharedStreamCapability(&output_capabilities, &input_capabilities, .{
+        .sample_formats = &.{ .f32, .i16 },
+    });
+
+    try std.testing.expectEqual(SampleFormat.f32, negotiated.output_supported.sample_format);
+    try std.testing.expectEqual(@as(u16, 1), negotiated.config.channels);
+    try std.testing.expectEqual(@as(u32, 44_100), negotiated.config.sample_rate);
+
+    try std.testing.expectError(root.AudioError.UnsupportedConfig, negotiateSharedStreamCapability(
+        &output_capabilities,
+        &input_capabilities,
+        .{ .sample_formats = &.{.f32}, .channels = 2 },
+    ));
+    try std.testing.expectError(root.AudioError.UnsupportedConfig, negotiateSharedStreamCapability(
+        &output_capabilities,
+        &input_capabilities,
+        .{ .sample_formats = &.{.f32}, .sample_rate = 48_000 },
+    ));
 }

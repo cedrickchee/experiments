@@ -93,10 +93,13 @@ pub const StreamBackendState = enum {
 
 pub const StreamDiagnostics = struct {
     timestamp: StreamInstant,
+    timestamp_status: LatencyStatus,
     run_status: StreamRunStatus,
     backend_state: StreamBackendState,
     buffer_size_frames: ?u32,
     period_size_frames: ?u32,
+    avail_min_frames: ?u32,
+    start_threshold_frames: ?u32,
     available_frames: ?u32,
     available_max_frames: ?u32,
     available_duration_ns: ?u64,
@@ -110,8 +113,11 @@ pub const StreamDiagnostics = struct {
     stream_error_count: u64,
     xrun_count: u64,
     recovery_count: u64,
+    expected_callback_interval_ns: ?u64,
     last_callback_interval_ns: ?u64,
     last_callback_drift_ns: ?i64,
+    max_callback_interval_ns: ?u64,
+    max_callback_drift_abs_ns: ?u64,
 };
 
 pub fn framesToDurationNs(frames: i64, sample_rate: u32) ?i64 {
@@ -184,6 +190,8 @@ pub fn sampleFormatForType(comptime Sample: type) ?root.SampleFormat {
     if (Sample == u8) return .u8;
     if (Sample == i16) return .i16;
     if (Sample == u16) return .u16;
+    if (Sample == i24) return .i24;
+    if (Sample == u24) return .u24;
     if (Sample == i32) return .i32;
     if (Sample == u32) return .u32;
     if (Sample == f64) return .f64;
@@ -246,6 +254,30 @@ pub const OutputCallbackU16 = *const fn (
 
 pub const InputCallbackU16 = *const fn (
     buffer: []const u16,
+    info: InputCallbackInfo,
+    userdata: ?*anyopaque,
+) void;
+
+pub const OutputCallbackI24 = *const fn (
+    buffer: []i24,
+    info: OutputCallbackInfo,
+    userdata: ?*anyopaque,
+) void;
+
+pub const InputCallbackI24 = *const fn (
+    buffer: []const i24,
+    info: InputCallbackInfo,
+    userdata: ?*anyopaque,
+) void;
+
+pub const OutputCallbackU24 = *const fn (
+    buffer: []u24,
+    info: OutputCallbackInfo,
+    userdata: ?*anyopaque,
+) void;
+
+pub const InputCallbackU24 = *const fn (
+    buffer: []const u24,
     info: InputCallbackInfo,
     userdata: ?*anyopaque,
 ) void;
