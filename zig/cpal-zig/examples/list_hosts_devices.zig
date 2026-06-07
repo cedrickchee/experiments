@@ -22,11 +22,17 @@ pub fn main(init: std.process.Init) !void {
         defer devices.deinit();
         for (devices.items) |device| {
             const info = device.info();
-            try stdout.print("    {s}: {s} [{s}]\n", .{
+            try stdout.print("    {s}: {s} [{s}], available={any}\n", .{
                 info.id,
                 info.name,
                 @tagName(info.direction),
+                device.isAvailable(),
             });
+            if (info.description) |description| {
+                if (!std.mem.eql(u8, description, info.name)) {
+                    try stdout.print("      {s}\n", .{description});
+                }
+            }
         }
     }
 }

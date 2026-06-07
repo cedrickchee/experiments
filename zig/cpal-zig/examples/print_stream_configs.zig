@@ -1,6 +1,13 @@
 const std = @import("std");
 const cpal = @import("cpal_zig");
 
+fn printBufferSize(stdout: *std.Io.Writer, buffer_size: cpal.SupportedBufferSize) !void {
+    switch (buffer_size) {
+        .unknown => try stdout.print("unknown", .{}),
+        .range => |range| try stdout.print("{d}-{d} frames", .{ range.min, range.max }),
+    }
+}
+
 fn printConfigs(
     stdout: *std.Io.Writer,
     label: []const u8,
@@ -16,10 +23,10 @@ fn printConfigs(
             config.max_sample_rate,
             @tagName(config.sample_format),
         });
-        switch (config.buffer_size) {
-            .unknown => try stdout.print("unknown\n", .{}),
-            .range => |range| try stdout.print("{d}-{d} frames\n", .{ range.min, range.max }),
-        }
+        try printBufferSize(stdout, config.buffer_size);
+        try stdout.print(", total_buffer=", .{});
+        try printBufferSize(stdout, config.total_buffer_size);
+        try stdout.print("\n", .{});
     }
 }
 

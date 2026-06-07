@@ -7,6 +7,7 @@ fn addCpalImport(root_module: *std.Build.Module, cpal_mod: *std.Build.Module) vo
 fn linkAudioLibraries(module: *std.Build.Module) void {
     module.link_libc = true;
     module.linkSystemLibrary("alsa", .{ .use_pkg_config = .yes });
+    module.linkSystemLibrary("pthread", .{});
 }
 
 pub fn build(b: *std.Build) void {
@@ -33,10 +34,21 @@ pub fn build(b: *std.Build) void {
         .{ .name = "list_hosts_devices", .path = "examples/list_hosts_devices.zig" },
         .{ .name = "print_stream_configs", .path = "examples/print_stream_configs.zig" },
         .{ .name = "open_output_stream", .path = "examples/open_output_stream.zig" },
+        .{ .name = "open_fixed_buffer_stream", .path = "examples/open_fixed_buffer_stream.zig" },
+        .{ .name = "deinit_running_stream", .path = "examples/deinit_running_stream.zig" },
+        .{ .name = "stream_lifecycle", .path = "examples/stream_lifecycle.zig" },
         .{ .name = "sine_wave", .path = "examples/sine_wave.zig" },
         .{ .name = "record_input", .path = "examples/record_input.zig" },
         .{ .name = "input_output_feedback", .path = "examples/input_output_feedback.zig" },
+        .{ .name = "open_f32_streams", .path = "examples/open_f32_streams.zig" },
+        .{ .name = "open_u8_streams", .path = "examples/open_u8_streams.zig" },
         .{ .name = "open_i16_streams", .path = "examples/open_i16_streams.zig" },
+        .{ .name = "open_u16_streams", .path = "examples/open_u16_streams.zig" },
+        .{ .name = "open_i32_streams", .path = "examples/open_i32_streams.zig" },
+        .{ .name = "open_u32_streams", .path = "examples/open_u32_streams.zig" },
+        .{ .name = "print_rich_capabilities", .path = "examples/print_rich_capabilities.zig" },
+        .{ .name = "hotplug_snapshot", .path = "examples/hotplug_snapshot.zig" },
+        .{ .name = "stream_diagnostics", .path = "examples/stream_diagnostics.zig" },
     };
 
     inline for (examples) |example| {
