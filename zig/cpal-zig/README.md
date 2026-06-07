@@ -1,6 +1,6 @@
 # cpal-zig
 
-An idiomatic Zig audio I/O library inspired by RustAudio CPAL.
+An idiomatic Zig audio I/O library inspired by [RustAudio CPAL](https://github.com/RustAudio/cpal).
 
 This is not a line-by-line translation. The public API keeps CPAL's core ideas:
 hosts, devices, stream configs, sample formats, typed errors, and callback-driven
