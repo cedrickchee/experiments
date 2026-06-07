@@ -81,3 +81,7 @@ typings/
 language-model/**/cache/
 python/**/cache/
 python/llm/gpu/
+
+# Zig
+zig-out
+.zig-cache
