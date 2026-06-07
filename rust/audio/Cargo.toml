@@ -1,0 +1,23 @@
+[package]
+name = "audio"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+default = []
+jack = ["cpal/jack"]
+pipewire = ["cpal/pipewire"]
+pulseaudio = ["cpal/pulseaudio"]
+realtime = ["cpal/realtime"]
+realtime-dbus = ["cpal/realtime-dbus"]
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+cpal = { git = "https://github.com/RustAudio/cpal.git" }
+hound = "3.5"
+ringbuf = "0.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+alsa = "0.11"
