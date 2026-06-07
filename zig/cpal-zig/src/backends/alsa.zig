@@ -192,13 +192,14 @@ pub const Device = struct {
         try config_value.validate();
         if (!self.direction.supportsOutput()) return root.AudioError.UnsupportedOperation;
 
-        const handle = try openConfiguredPcm(self.id_text, c.SND_PCM_STREAM_PLAYBACK, config_value);
+        const handle = try openConfiguredPcm(self.id_text, c.SND_PCM_STREAM_PLAYBACK, config_value, .f32);
         errdefer _ = c.snd_pcm_close(handle);
         return .{
             .handle = handle,
             .direction = .output,
+            .sample_format = .f32,
             .config = config_value,
-            .callback = .{ .output = callback },
+            .callback = .{ .output_f32 = callback },
             .userdata = userdata,
             .error_callback = error_callback,
             .error_userdata = error_userdata,
@@ -217,13 +218,66 @@ pub const Device = struct {
         try config_value.validate();
         if (!self.direction.supportsInput()) return root.AudioError.UnsupportedOperation;
 
-        const handle = try openConfiguredPcm(self.id_text, c.SND_PCM_STREAM_CAPTURE, config_value);
+        const handle = try openConfiguredPcm(self.id_text, c.SND_PCM_STREAM_CAPTURE, config_value, .f32);
         errdefer _ = c.snd_pcm_close(handle);
         return .{
             .handle = handle,
             .direction = .input,
+            .sample_format = .f32,
             .config = config_value,
-            .callback = .{ .input = callback },
+            .callback = .{ .input_f32 = callback },
+            .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
+            .buffer_size_frames = queryPeriodSize(handle) catch null,
+        };
+    }
+
+    pub fn buildOutputStreamI16(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.OutputCallbackI16,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        try config_value.validate();
+        if (!self.direction.supportsOutput()) return root.AudioError.UnsupportedOperation;
+
+        const handle = try openConfiguredPcm(self.id_text, c.SND_PCM_STREAM_PLAYBACK, config_value, .i16);
+        errdefer _ = c.snd_pcm_close(handle);
+        return .{
+            .handle = handle,
+            .direction = .output,
+            .sample_format = .i16,
+            .config = config_value,
+            .callback = .{ .output_i16 = callback },
+            .userdata = userdata,
+            .error_callback = error_callback,
+            .error_userdata = error_userdata,
+            .buffer_size_frames = queryPeriodSize(handle) catch null,
+        };
+    }
+
+    pub fn buildInputStreamI16(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.InputCallbackI16,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        try config_value.validate();
+        if (!self.direction.supportsInput()) return root.AudioError.UnsupportedOperation;
+
+        const handle = try openConfiguredPcm(self.id_text, c.SND_PCM_STREAM_CAPTURE, config_value, .i16);
+        errdefer _ = c.snd_pcm_close(handle);
+        return .{
+            .handle = handle,
+            .direction = .input,
+            .sample_format = .i16,
+            .config = config_value,
+            .callback = .{ .input_i16 = callback },
             .userdata = userdata,
             .error_callback = error_callback,
             .error_userdata = error_userdata,
@@ -236,6 +290,7 @@ fn openConfiguredPcm(
     id_text: [:0]const u8,
     stream_type: c.snd_pcm_stream_t,
     config_value: root.StreamConfig,
+    sample_format: root.SampleFormat,
 ) root.AudioError!*c.snd_pcm_t {
     var handle: ?*c.snd_pcm_t = null;
     var rc = c.snd_pcm_open(&handle, id_text.ptr, stream_type, 0);
@@ -249,7 +304,7 @@ fn openConfiguredPcm(
 
     rc = c.snd_pcm_set_params(
         handle,
-        c.SND_PCM_FORMAT_FLOAT_LE,
+        alsaFormat(sample_format) orelse return root.AudioError.UnsupportedConfig,
         c.SND_PCM_ACCESS_RW_INTERLEAVED,
         config_value.channels,
         config_value.sample_rate,
@@ -259,6 +314,14 @@ fn openConfiguredPcm(
     if (rc < 0) return mapAlsaError(rc);
 
     return handle.?;
+}
+
+fn alsaFormat(sample_format: root.SampleFormat) ?c.snd_pcm_format_t {
+    return switch (sample_format) {
+        .f32 => c.SND_PCM_FORMAT_FLOAT_LE,
+        .i16 => c.SND_PCM_FORMAT_S16_LE,
+        else => null,
+    };
 }
 
 fn appendProbedFormat(
@@ -368,10 +431,13 @@ fn findFormat(
 pub const Stream = struct {
     handle: *c.snd_pcm_t,
     direction: root.DeviceDirection,
+    sample_format: root.SampleFormat,
     config: root.StreamConfig,
     callback: union(enum) {
-        output: root.OutputCallbackF32,
-        input: root.InputCallbackF32,
+        output_f32: root.OutputCallbackF32,
+        input_f32: root.InputCallbackF32,
+        output_i16: root.OutputCallbackI16,
+        input_i16: root.InputCallbackI16,
     },
     userdata: ?*anyopaque,
     error_callback: ?root.StreamErrorCallback,
@@ -382,12 +448,24 @@ pub const Stream = struct {
 
     pub fn play(self: *Stream) root.AudioError!void {
         if (self.running.swap(true, .seq_cst)) return;
+        const prepare_rc = c.snd_pcm_prepare(self.handle);
+        if (prepare_rc < 0) {
+            self.running.store(false, .seq_cst);
+            return mapAlsaError(prepare_rc);
+        }
         self.thread = std.Thread.spawn(.{}, run, .{self}) catch |err| switch (err) {
-            error.OutOfMemory => return root.AudioError.OutOfMemory,
-            error.SystemResources => return root.AudioError.ResourceExhausted,
-            error.ThreadQuotaExceeded => return root.AudioError.ResourceExhausted,
-            error.LockedMemoryLimitExceeded => return root.AudioError.ResourceExhausted,
-            else => return root.AudioError.BackendError,
+            error.OutOfMemory => {
+                self.running.store(false, .seq_cst);
+                return root.AudioError.OutOfMemory;
+            },
+            error.SystemResources, error.ThreadQuotaExceeded, error.LockedMemoryLimitExceeded => {
+                self.running.store(false, .seq_cst);
+                return root.AudioError.ResourceExhausted;
+            },
+            else => {
+                self.running.store(false, .seq_cst);
+                return root.AudioError.BackendError;
+            },
         };
     }
 
@@ -416,6 +494,13 @@ pub const Stream = struct {
             .default => 256,
             .fixed => |value| @intCast(value),
         };
+        switch (self.callback) {
+            .output_f32, .input_f32 => self.runF32(frames),
+            .output_i16, .input_i16 => self.runI16(frames),
+        }
+    }
+
+    fn runF32(self: *Stream, frames: usize) void {
         const samples = frames * self.config.channels;
         const allocator = std.heap.c_allocator;
         const buffer = allocator.alloc(f32, samples) catch return;
@@ -423,13 +508,29 @@ pub const Stream = struct {
 
         while (self.running.load(.seq_cst)) {
             switch (self.callback) {
-                .output => |callback| self.runOutputCallback(callback, buffer, frames),
-                .input => |callback| self.runInputCallback(callback, buffer, frames),
+                .output_f32 => |callback| self.runOutputCallbackF32(callback, buffer, frames),
+                .input_f32 => |callback| self.runInputCallbackF32(callback, buffer, frames),
+                else => unreachable,
             }
         }
     }
 
-    fn runOutputCallback(
+    fn runI16(self: *Stream, frames: usize) void {
+        const samples = frames * self.config.channels;
+        const allocator = std.heap.c_allocator;
+        const buffer = allocator.alloc(i16, samples) catch return;
+        defer allocator.free(buffer);
+
+        while (self.running.load(.seq_cst)) {
+            switch (self.callback) {
+                .output_i16 => |callback| self.runOutputCallbackI16(callback, buffer, frames),
+                .input_i16 => |callback| self.runInputCallbackI16(callback, buffer, frames),
+                else => unreachable,
+            }
+        }
+    }
+
+    fn runOutputCallbackF32(
         self: *Stream,
         callback: root.OutputCallbackF32,
         buffer: []f32,
@@ -438,11 +539,10 @@ pub const Stream = struct {
         @memset(buffer, 0);
         const now = streamTimestamp(self.handle);
         callback(buffer, .{ .callback = now, .playback = now }, self.userdata);
-        const written = c.snd_pcm_writei(self.handle, buffer.ptr, @intCast(frames));
-        if (written < 0) self.handlePcmIoError(@intCast(written));
+        self.writeAllF32(buffer, frames);
     }
 
-    fn runInputCallback(
+    fn runInputCallbackF32(
         self: *Stream,
         callback: root.InputCallbackF32,
         buffer: []f32,
@@ -461,9 +561,87 @@ pub const Stream = struct {
         }, self.userdata);
     }
 
+    fn runOutputCallbackI16(
+        self: *Stream,
+        callback: root.OutputCallbackI16,
+        buffer: []i16,
+        frames: usize,
+    ) void {
+        @memset(buffer, 0);
+        const now = streamTimestamp(self.handle);
+        callback(buffer, .{ .callback = now, .playback = now }, self.userdata);
+        self.writeAllI16(buffer, frames);
+    }
+
+    fn runInputCallbackI16(
+        self: *Stream,
+        callback: root.InputCallbackI16,
+        buffer: []i16,
+        frames: usize,
+    ) void {
+        const read = c.snd_pcm_readi(self.handle, buffer.ptr, @intCast(frames));
+        if (read < 0) {
+            self.handlePcmIoError(@intCast(read));
+            return;
+        }
+        const sample_count = @as(usize, @intCast(read)) * self.config.channels;
+        const now = streamTimestamp(self.handle);
+        callback(buffer[0..@min(sample_count, buffer.len)], .{
+            .callback = now,
+            .capture = now,
+        }, self.userdata);
+    }
+
+    fn writeAllF32(self: *Stream, buffer: []f32, frames: usize) void {
+        var frames_written: usize = 0;
+        const channels: usize = self.config.channels;
+        while (frames_written < frames and self.running.load(.seq_cst)) {
+            const offset = frames_written * channels;
+            const written = c.snd_pcm_writei(
+                self.handle,
+                buffer[offset..].ptr,
+                @intCast(frames - frames_written),
+            );
+            if (written < 0) {
+                self.handlePcmIoError(@intCast(written));
+                return;
+            }
+            if (written == 0) {
+                emitStreamError(self, root.AudioError.DeviceBusy);
+                sleepBackoff();
+                return;
+            }
+            frames_written += @intCast(written);
+        }
+    }
+
+    fn writeAllI16(self: *Stream, buffer: []i16, frames: usize) void {
+        var frames_written: usize = 0;
+        const channels: usize = self.config.channels;
+        while (frames_written < frames and self.running.load(.seq_cst)) {
+            const offset = frames_written * channels;
+            const written = c.snd_pcm_writei(
+                self.handle,
+                buffer[offset..].ptr,
+                @intCast(frames - frames_written),
+            );
+            if (written < 0) {
+                self.handlePcmIoError(@intCast(written));
+                return;
+            }
+            if (written == 0) {
+                emitStreamError(self, root.AudioError.DeviceBusy);
+                sleepBackoff();
+                return;
+            }
+            frames_written += @intCast(written);
+        }
+    }
+
     fn handlePcmIoError(self: *Stream, rc: c_int) void {
         const err = mapAlsaError(rc);
         emitStreamError(self, err);
+        if (err == root.AudioError.DeviceBusy) sleepBackoff();
         const recovered = c.snd_pcm_recover(self.handle, rc, 1);
         if (recovered < 0) {
             emitStreamError(self, mapAlsaError(recovered));
@@ -497,6 +675,16 @@ fn timestampToInstant(timestamp: c.snd_htimestamp_t) root.StreamInstant {
         .nanos = @as(u128, @intCast(timestamp.tv_sec)) * std.time.ns_per_s +
             @as(u128, @intCast(timestamp.tv_nsec)),
     };
+}
+
+fn sleepBackoff() void {
+    if (builtin.os.tag == .linux) {
+        var ts = std.os.linux.timespec{
+            .sec = 0,
+            .nsec = 1 * std.time.ns_per_ms,
+        };
+        _ = std.os.linux.nanosleep(&ts, null);
+    }
 }
 
 fn directionFromIoId(ioid_ptr: [*c]u8) root.DeviceDirection {

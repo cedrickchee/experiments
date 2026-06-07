@@ -11,8 +11,10 @@ input/output streams. The first implementation target is ALSA on Linux.
 - ALSA host boundary: implemented for Linux
 - ALSA device enumeration: PCM hint enumeration with input/output/duplex labels
 - ALSA config probing: interleaved `f32` and `i16` playback/capture ranges
-- ALSA output stream: `f32` callback stream through worker-threaded `snd_pcm_writei`
-- ALSA input stream: `f32` callback stream through worker-threaded `snd_pcm_readi`
+- ALSA output streams: `f32` and `i16` callback streams through worker-threaded `snd_pcm_writei`
+- ALSA input streams: `f32` and `i16` callback streams through worker-threaded `snd_pcm_readi`
+- Config negotiation: helper APIs for choosing format, channel count, sample
+  rate, and buffer size from probed ranges
 - Stream lifecycle: `play`, `pause`, `deinit`, buffer-size query, xrun recovery,
   stream error callbacks, and ALSA-backed timestamps
 - CoreAudio, WASAPI, JACK, PulseAudio: extension stubs
@@ -36,4 +38,5 @@ zig build
 ./zig-out/bin/sine_wave
 ./zig-out/bin/record_input
 ./zig-out/bin/input_output_feedback
+./zig-out/bin/open_i16_streams
 ```

@@ -124,10 +124,17 @@ pub fn main(init: std.process.Init) !void {
     };
     defer output_device.deinit(allocator);
 
-    const output_config = (try output_device.defaultOutputConfig()).config();
-    var input_config = (try input_device.defaultInputConfig()).config();
-    input_config.channels = output_config.channels;
-    input_config.sample_rate = output_config.sample_rate;
+    const output_negotiated = try output_device.negotiateOutputConfig(allocator, .{
+        .sample_formats = &.{.f32},
+        .channels = 2,
+        .sample_rate = 48_000,
+    });
+    const output_config = output_negotiated.config;
+    const input_config = (try input_device.negotiateInputConfig(allocator, .{
+        .sample_formats = &.{.f32},
+        .channels = output_config.channels,
+        .sample_rate = output_config.sample_rate,
+    })).config;
 
     const ring_samples = @as(usize, output_config.sample_rate) * output_config.channels;
     const ring = try allocator.alloc(f32, ring_samples);

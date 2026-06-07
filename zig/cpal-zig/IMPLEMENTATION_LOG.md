@@ -16,9 +16,9 @@ Design decisions:
   allocator for enumeration.
 - Stream callbacks use a plain function pointer plus optional userdata. This is
   explicit, C-compatible, and avoids hidden allocation.
-- The first output stream format is `f32` interleaved audio. Additional sample
-  formats are modeled in the public API but not all are wired into ALSA stream
-  creation yet.
+- The first stream formats wired through ALSA are `f32` and `i16` interleaved
+  audio. Additional sample formats are modeled in the public API but not all are
+  wired into ALSA stream creation yet.
 
 Current ALSA behavior:
 
@@ -27,12 +27,19 @@ Current ALSA behavior:
   `f32`/`i16` ranges only when ALSA accepts those formats.
 - Default output and input devices are represented by the ALSA `default` PCM.
 - Output streams use `snd_pcm_writei`; input streams use `snd_pcm_readi`.
+- `f32` and `i16` typed stream builders are implemented for playback and
+  capture.
+- Public config negotiation helpers can choose a supported format, channel
+  count, sample rate, and requested/default buffer size from probed ranges.
 - Stream callbacks carry callback and playback/capture timestamps. ALSA
   timestamps come from `snd_pcm_htimestamp` when available, with a monotonic
   fallback.
 - Stream error callbacks are supported. ALSA `EPIPE` is surfaced as
   `AudioError.Xrun`; failed recovery stops the worker thread.
 - `Stream.bufferSize()` returns the ALSA period size when it can be queried.
+- `play()` prepares the ALSA PCM before starting the worker thread, and output
+  streams now handle short `snd_pcm_writei` results by continuing until the
+  requested period has been written or an error occurs.
 
 Unsupported or incomplete:
 
@@ -45,11 +52,13 @@ Unsupported or incomplete:
 - ALSA streams use ordinary worker threads, `snd_pcm_readi`, and
   `snd_pcm_writei`; this is not yet a low-latency real-time callback
   integration with scheduling/priority tuning.
-- Input/output examples assume compatible default-device channel count and
-  sample rate. More CPAL-like negotiation across distinct devices is still
-  future work.
-- Only `f32` stream creation is implemented. Other sample formats are modeled
-  and probed, but not yet exposed through typed builders.
+- Input streams deliver short reads to the callback when ALSA returns fewer
+  frames than requested; deeper buffering/poll integration remains future work.
+- The input-output feedback example now negotiates matching default-device
+  format, channel count, and sample rate, but more CPAL-like cross-device
+  negotiation remains future work.
+- Only `f32` and `i16` stream creation are implemented. Other sample formats are
+  modeled, but not yet probed and exposed through typed builders.
 - CoreAudio, WASAPI, JACK, and PulseAudio are extension stubs only.
 - Device metadata is much smaller than CPAL's `DeviceDescription`.
 - Backend-specific latency correction and precise drift handling are not
@@ -70,6 +79,12 @@ Validation performed:
 - `./zig-out/bin/record_input` successfully opens a local ALSA input stream and
   records callback meter data for two seconds. Local run used 2 channels at
   48 kHz with a 1200-frame buffer and reported zero callback errors.
+- `./zig-out/bin/open_i16_streams` successfully opens local ALSA `i16` playback
+  and capture streams. Local run used 2 channels at 48 kHz and reported
+  `output_calls=59`, `input_calls=33`, `input_samples=16896`, and zero callback
+  errors.
+- `./zig-out/bin/open_output_stream` and `./zig-out/bin/open_i16_streams` were
+  rerun after the ALSA prepare/short-write changes and both passed locally.
 - `./zig-out/bin/sine_wave` is built but was not run automatically because it
   produces audible output.
 - `./zig-out/bin/input_output_feedback` is built but was not run automatically
@@ -87,17 +102,25 @@ Runtime fixes found during smoke testing:
   The local default device reports `f32` and `i16` interleaved playback support.
 - ALSA input config probing now uses the same hardware-parameter path for
   capture devices.
+- ALSA `i16` stream creation now uses `SND_PCM_FORMAT_S16_LE`; `f32` stream
+  creation uses `SND_PCM_FORMAT_FLOAT_LE`.
+- The input-output feedback example now uses public config negotiation rather
+  than force-copying output channel count and sample rate into the input stream.
+- ALSA `play()` now resets the running flag if prepare or thread spawn fails,
+  avoiding a stuck running state after startup errors.
+- ALSA output streams now handle partial writes rather than treating any
+  non-negative `snd_pcm_writei` return as a full period.
 - The null backend now exposes separate input and output devices so input stream
-  tests can run without hardware.
+  and `i16` stream tests can run without hardware.
 
 Differences from Rust CPAL:
 
 - `Host`, `Device`, and `Stream` are Zig tagged unions instead of Rust enums
   generated through macros.
-- The Zig API separates `buildOutputStreamF32` from future typed/comptime stream
-  builders.
-- The Zig API has a matching `buildInputStreamF32` rather than CPAL's generic
-  typed builder surface.
+- The Zig API separates `buildOutputStreamF32`/`buildOutputStreamI16` from future
+  typed/comptime stream builders.
+- The Zig API has matching `buildInputStreamF32`/`buildInputStreamI16` rather
+  than CPAL's generic typed builder surface.
 - Callers explicitly deinitialize devices, device lists, hosts, and streams that
   own memory or native handles.
 - Unsupported backends are present as named extension points rather than hidden

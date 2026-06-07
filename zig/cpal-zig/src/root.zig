@@ -9,14 +9,19 @@ pub const SampleFormat = config.SampleFormat;
 pub const BufferSize = config.BufferSize;
 pub const SupportedBufferSize = config.SupportedBufferSize;
 pub const StreamConfig = config.StreamConfig;
+pub const StreamConfigRequest = config.StreamConfigRequest;
 pub const SupportedStreamConfig = config.SupportedStreamConfig;
 pub const SupportedStreamConfigRange = config.SupportedStreamConfigRange;
+pub const NegotiatedStreamConfig = config.NegotiatedStreamConfig;
 pub const StreamInstant = stream.StreamInstant;
 pub const OutputCallbackInfo = stream.OutputCallbackInfo;
 pub const InputCallbackInfo = stream.InputCallbackInfo;
 pub const OutputCallbackF32 = stream.OutputCallbackF32;
 pub const InputCallbackF32 = stream.InputCallbackF32;
+pub const OutputCallbackI16 = stream.OutputCallbackI16;
+pub const InputCallbackI16 = stream.InputCallbackI16;
 pub const StreamErrorCallback = stream.StreamErrorCallback;
+pub const negotiateStreamConfig = config.negotiateStreamConfig;
 
 pub const AudioError = error{
     BackendUnavailable,
@@ -148,6 +153,26 @@ pub const Device = union(HostId) {
         };
     }
 
+    pub fn negotiateOutputConfig(
+        self: Device,
+        allocator: std.mem.Allocator,
+        request: StreamConfigRequest,
+    ) AudioError!NegotiatedStreamConfig {
+        const configs = try self.supportedOutputConfigs(allocator);
+        defer allocator.free(configs);
+        return negotiateStreamConfig(configs, request);
+    }
+
+    pub fn negotiateInputConfig(
+        self: Device,
+        allocator: std.mem.Allocator,
+        request: StreamConfigRequest,
+    ) AudioError!NegotiatedStreamConfig {
+        const configs = try self.supportedInputConfigs(allocator);
+        defer allocator.free(configs);
+        return negotiateStreamConfig(configs, request);
+    }
+
     pub fn buildOutputStreamF32(
         self: Device,
         config_value: StreamConfig,
@@ -175,6 +200,36 @@ pub const Device = union(HostId) {
             .alsa => |device| .{ .alsa = try device.buildInputStreamF32(config_value, callback, userdata, error_callback, error_userdata) },
             .coreaudio, .wasapi, .jack, .pulseaudio => |device| .{ .stub = try device.buildInputStreamF32(config_value, callback, userdata, error_callback, error_userdata) },
             .null => |device| .{ .null = try device.buildInputStreamF32(config_value, callback, userdata, error_callback, error_userdata) },
+        };
+    }
+
+    pub fn buildOutputStreamI16(
+        self: Device,
+        config_value: StreamConfig,
+        callback: OutputCallbackI16,
+        userdata: ?*anyopaque,
+        error_callback: ?StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) AudioError!stream.Stream {
+        return switch (self) {
+            .alsa => |device| .{ .alsa = try device.buildOutputStreamI16(config_value, callback, userdata, error_callback, error_userdata) },
+            .coreaudio, .wasapi, .jack, .pulseaudio => |device| .{ .stub = try device.buildOutputStreamI16(config_value, callback, userdata, error_callback, error_userdata) },
+            .null => |device| .{ .null = try device.buildOutputStreamI16(config_value, callback, userdata, error_callback, error_userdata) },
+        };
+    }
+
+    pub fn buildInputStreamI16(
+        self: Device,
+        config_value: StreamConfig,
+        callback: InputCallbackI16,
+        userdata: ?*anyopaque,
+        error_callback: ?StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) AudioError!stream.Stream {
+        return switch (self) {
+            .alsa => |device| .{ .alsa = try device.buildInputStreamI16(config_value, callback, userdata, error_callback, error_userdata) },
+            .coreaudio, .wasapi, .jack, .pulseaudio => |device| .{ .stub = try device.buildInputStreamI16(config_value, callback, userdata, error_callback, error_userdata) },
+            .null => |device| .{ .null = try device.buildInputStreamI16(config_value, callback, userdata, error_callback, error_userdata) },
         };
     }
 };

@@ -127,6 +127,40 @@ pub const Device = struct {
         _ = error_userdata;
         return root.AudioError.UnsupportedOperation;
     }
+
+    pub fn buildOutputStreamI16(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.OutputCallbackI16,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        _ = self;
+        _ = config_value;
+        _ = callback;
+        _ = userdata;
+        _ = error_callback;
+        _ = error_userdata;
+        return root.AudioError.UnsupportedOperation;
+    }
+
+    pub fn buildInputStreamI16(
+        self: Device,
+        config_value: root.StreamConfig,
+        callback: root.InputCallbackI16,
+        userdata: ?*anyopaque,
+        error_callback: ?root.StreamErrorCallback,
+        error_userdata: ?*anyopaque,
+    ) root.AudioError!Stream {
+        _ = self;
+        _ = config_value;
+        _ = callback;
+        _ = userdata;
+        _ = error_callback;
+        _ = error_userdata;
+        return root.AudioError.UnsupportedOperation;
+    }
 };
 
 pub const Stream = struct {

@@ -53,6 +53,18 @@ pub const InputCallbackF32 = *const fn (
     userdata: ?*anyopaque,
 ) void;
 
+pub const OutputCallbackI16 = *const fn (
+    buffer: []i16,
+    info: OutputCallbackInfo,
+    userdata: ?*anyopaque,
+) void;
+
+pub const InputCallbackI16 = *const fn (
+    buffer: []const i16,
+    info: InputCallbackInfo,
+    userdata: ?*anyopaque,
+) void;
+
 pub const Stream = union(enum) {
     alsa: backends.alsa.Stream,
     stub: backends.stub.Stream,
