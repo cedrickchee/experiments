@@ -10,9 +10,21 @@ fn linkAudioLibraries(module: *std.Build.Module) void {
     module.linkSystemLibrary("pthread", .{});
 }
 
+fn linkWinampLibraries(module: *std.Build.Module) void {
+    linkAudioLibraries(module);
+    module.linkSystemLibrary("avformat", .{ .use_pkg_config = .yes });
+    module.linkSystemLibrary("avcodec", .{ .use_pkg_config = .yes });
+    module.linkSystemLibrary("avutil", .{ .use_pkg_config = .yes });
+    module.linkSystemLibrary("swresample", .{ .use_pkg_config = .yes });
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const vaxis_dep = b.dependency("vaxis", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     const cpal_mod = b.addModule("cpal_zig", .{
         .root_source_file = b.path("src/root.zig"),
@@ -70,6 +82,32 @@ pub fn build(b: *std.Build) void {
         });
         b.installArtifact(exe);
     }
+
+    const winamp_mod = b.createModule(.{
+        .root_source_file = b.path("demos/winamp/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "cpal_zig", .module = cpal_mod },
+            .{ .name = "vaxis", .module = vaxis_dep.module("vaxis") },
+        },
+    });
+    linkWinampLibraries(winamp_mod);
+
+    const winamp_exe = b.addExecutable(.{
+        .name = "winamp",
+        .root_module = winamp_mod,
+    });
+    b.installArtifact(winamp_exe);
+
+    const run_winamp = b.addRunArtifact(winamp_exe);
+    if (b.args) |args| run_winamp.addArgs(args);
+
+    const winamp_step = b.step("winamp", "Build the Winamp-style TUI demo");
+    winamp_step.dependOn(&winamp_exe.step);
+
+    const run_winamp_step = b.step("run-winamp", "Run the Winamp-style TUI demo");
+    run_winamp_step.dependOn(&run_winamp.step);
 
     const unit_tests = b.addTest(.{ .root_module = cpal_mod });
     const run_unit_tests = b.addRunArtifact(unit_tests);
