@@ -105,7 +105,7 @@ calling it CPAL-grade across hardware and plugin environments:
   playback-only devices, suspend/resume, unplug while streaming, and real ALSA
   control hotplug events.
 
-See `IMPLEMENTATION_LOG.md` for design notes and gaps.
+See [IMPLEMENTATION_LOG.md](./IMPLEMENTATION_LOG.md) for design notes and gaps.
 
 ## Build
 
