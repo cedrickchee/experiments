@@ -462,7 +462,7 @@ const App = struct {
             .buffer_health = switch (decoder_status) {
                 .idle => "idle",
                 .connecting => "connecting stream",
-                .decoding => if (buffer_percent < 5) "buffer low" else "buffering stable",
+                .decoding => if (self.state == .playing) "stream stable" else if (buffer_percent < 5) "buffer low" else "buffering stable",
                 .ended => "stream ended",
                 .failed => "stream error",
             },
@@ -732,22 +732,14 @@ fn drawTransport(win: Window, app_state: App, snapshot: PlayerSnapshot) void {
         .{ .text = live, .style = state_style },
     });
 
-    var time_buf: [16]u8 = undefined;
-    const time_text = std.fmt.bufPrint(&time_buf, "{d:0>2}:{d:0>2}:{d:0>2}", .{
-        snapshot.elapsed_seconds / 3600,
-        (snapshot.elapsed_seconds / 60) % 60,
-        snapshot.elapsed_seconds % 60,
-    }) catch "00:00:00";
-    _ = win.printSegment(.{ .text = time_text, .style = palette.cyan }, .{ .row_offset = 1, .col_offset = 1, .wrap = .none });
+    drawTimestamp(win, 1, 1, snapshot.elapsed_seconds, palette.cyan);
     drawMeter(win, 12, 1, win.width / 2, snapshot.level_percent, palette.green, app_state.ascii);
 
-    var vol_buf: [8]u8 = undefined;
-    const vol_text = std.fmt.bufPrint(&vol_buf, "VOL {d:0>3}", .{snapshot.volume_percent}) catch "VOL";
     const vol_col = if (win.width > 28) win.width - 28 else 1;
-    _ = win.printSegment(.{ .text = vol_text, .style = palette.amber }, .{ .row_offset = 1, .col_offset = vol_col, .wrap = .none });
+    drawVolumeLabel(win, vol_col, 1, snapshot.volume_percent, palette.amber);
     drawMeter(win, vol_col + 8, 1, 16, snapshot.volume_percent, palette.amber, app_state.ascii);
 
-    const controls = if (app_state.ascii) "[<<] [■] [>/||] [R]" else "[◀] [■] [▶/Ⅱ] [↻]";
+    const controls = if (app_state.ascii) "[<<] [S] [>/||] [R]" else "[◀] [■] [▶/Ⅱ] [↻]";
     _ = win.printSegment(.{ .text = controls, .style = state_style }, .{ .row_offset = @min(@as(u16, 2), win.height -| 1), .col_offset = 1, .wrap = .none });
     printRight(win, @min(@as(u16, 2), win.height -| 1), &.{.{ .text = snapshot.device_name, .style = palette.muted }});
 
@@ -760,9 +752,9 @@ fn drawTransport(win: Window, app_state: App, snapshot: PlayerSnapshot) void {
 fn drawSpectrum(win: Window, app_state: App, snapshot: PlayerSnapshot) void {
     const palette = app_state.palette;
     win.fill(.{ .style = palette.panel });
-    if (win.height == 0 or win.width == 0) return;
+    if (win.height == 0 or win.width <= 2) return;
 
-    const bars = @min(@as(u16, 64), @max(@as(u16, 8), win.width -| 2));
+    const bars = win.width -| 2;
     const max_h = win.height -| 1;
     var col: u16 = 1;
     while (col <= bars and col < win.width) : (col += 1) {
@@ -853,6 +845,64 @@ fn drawMeter(win: Window, col: u16, row: u16, width: u16, percent: u8, style: St
             .style = if (is_filled) style else .{ .fg = .{ .rgb = .{ 0x50, 0x5a, 0x66 } }, .bg = .{ .rgb = .{ 0x11, 0x16, 0x1f } } },
         });
     }
+}
+
+fn drawTimestamp(win: Window, col: u16, row: u16, elapsed_seconds: u32, style: Style) void {
+    const hours: u8 = @intCast(@min(elapsed_seconds / 3600, 99));
+    const minutes: u8 = @intCast((elapsed_seconds / 60) % 60);
+    const seconds: u8 = @intCast(elapsed_seconds % 60);
+    drawTwoDigits(win, col, row, hours, style);
+    writeGlyph(win, col + 2, row, ":", style);
+    drawTwoDigits(win, col + 3, row, minutes, style);
+    writeGlyph(win, col + 5, row, ":", style);
+    drawTwoDigits(win, col + 6, row, seconds, style);
+}
+
+fn drawVolumeLabel(win: Window, col: u16, row: u16, percent: u8, style: Style) void {
+    writeGlyph(win, col, row, "V", style);
+    writeGlyph(win, col + 1, row, "O", style);
+    writeGlyph(win, col + 2, row, "L", style);
+    writeGlyph(win, col + 3, row, " ", style);
+    drawThreeDigits(win, col + 4, row, percent, style);
+}
+
+fn drawTwoDigits(win: Window, col: u16, row: u16, value: u8, style: Style) void {
+    writeDigit(win, col, row, value / 10, style);
+    writeDigit(win, col + 1, row, value % 10, style);
+}
+
+fn drawThreeDigits(win: Window, col: u16, row: u16, value: u8, style: Style) void {
+    const bounded = @min(value, 100);
+    writeDigit(win, col, row, bounded / 100, style);
+    writeDigit(win, col + 1, row, (bounded / 10) % 10, style);
+    writeDigit(win, col + 2, row, bounded % 10, style);
+}
+
+fn writeDigit(win: Window, col: u16, row: u16, digit: u8, style: Style) void {
+    writeGlyph(win, col, row, digitGlyph(digit), style);
+}
+
+fn writeGlyph(win: Window, col: u16, row: u16, glyph: []const u8, style: Style) void {
+    win.writeCell(col, row, .{
+        .char = .{ .grapheme = glyph, .width = 1 },
+        .style = style,
+    });
+}
+
+fn digitGlyph(digit: u8) []const u8 {
+    return switch (digit) {
+        0 => "0",
+        1 => "1",
+        2 => "2",
+        3 => "3",
+        4 => "4",
+        5 => "5",
+        6 => "6",
+        7 => "7",
+        8 => "8",
+        9 => "9",
+        else => "0",
+    };
 }
 
 fn printRight(win: Window, row: u16, segments: []const Segment) void {
