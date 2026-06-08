@@ -5,7 +5,7 @@
 Initial goal: port the architecture of RustAudio CPAL to idiomatic Zig, starting
 with an ALSA-on-Linux MVP.
 
-Design decisions:
+### Design decisions
 
 - The API is architecture-inspired, not a line-by-line Rust translation.
 - Backends are represented by tagged unions and small backend-specific structs.
@@ -27,7 +27,7 @@ Design decisions:
   modeled in the public API but intentionally stay unbuildable until the
   backend has exact native mappings or explicit conversion code.
 
-Current ALSA behavior:
+### Current ALSA behavior
 
 - ALSA output and input stream configuration enumeration probe
   `snd_pcm_hw_params` for interleaved playback/capture support and report
@@ -216,7 +216,7 @@ Current ALSA behavior:
   offsets, so pathological channel/period combinations terminate through the
   stream error path instead of panicking in worker-thread arithmetic.
 
-Unsupported or incomplete:
+### Unsupported or incomplete
 
 Summary of remaining real CPAL-grade ALSA gaps:
 
@@ -239,6 +239,8 @@ Summary of remaining real CPAL-grade ALSA gaps:
   field; rich capabilities are preferred for full channel-range metadata.
 - Broader real-device coverage is still needed for direct `hw:`, USB,
   capture-only/playback-only, suspend/resume, and ALSA control hotplug events.
+
+Non-summary:
 
 - The compatibility `SupportedStreamConfigRange` API now preserves optional
   channel ranges and honors requested channel counts inside that range, while
@@ -305,7 +307,7 @@ Summary of remaining real CPAL-grade ALSA gaps:
   hardware-disconnect validation remains incomplete.
 - Deeper latency correction/drift handling remains future work.
 
-Validation performed:
+### Validation performed
 
 - `zig build` passes with Zig 0.16.0.
 - `zig build test` passes.
@@ -457,7 +459,7 @@ Validation performed:
 - `./zig-out/bin/input_output_feedback` is built but was not run automatically
   because it monitors live input to output and can create audible feedback.
 
-Runtime fixes found during smoke testing:
+### Runtime fixes found during smoke testing
 
 - ALSA hint values are nullable C pointers, not Zig optionals; hint parsing now
   checks for null before converting to slices.
@@ -675,7 +677,7 @@ Runtime fixes found during smoke testing:
 - Local smoke coverage now also includes ALSA output pause/restart/drain status
   transitions and deinitializing an actively running ALSA input stream.
 
-Differences from Rust CPAL:
+### Differences from Rust CPAL
 
 - `Host`, `Device`, and `Stream` are Zig tagged unions instead of Rust enums
   generated through macros.
