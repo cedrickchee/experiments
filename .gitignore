@@ -85,3 +85,4 @@ python/llm/gpu/
 # Zig
 zig-out
 .zig-cache
+zig-pkg
