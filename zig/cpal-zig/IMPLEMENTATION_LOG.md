@@ -218,6 +218,28 @@ Current ALSA behavior:
 
 Unsupported or incomplete:
 
+Summary of remaining real CPAL-grade ALSA gaps:
+
+- Virtual/plugin PCM quirks can still make probed ranges broader than what a
+  direct hardware device would expose.
+- Worker-thread scheduling is poll-driven and best-effort realtime, not a fully
+  tuned low-latency callback integration.
+- Packed 3-byte 24-bit formats, signed/unsigned 64-bit integer PCM, and DSD are
+  not implemented.
+- Shared duplex negotiation does not perform automatic resampling, channel
+  remixing, or sample-format conversion.
+- Diagnostics expose timestamp/latency status and drift observations, but do not
+  perform deeper latency correction or active drift compensation.
+- Hotplug support still falls back to polling for virtual/plugin PCMs and needs
+  broader device-specific validation.
+- Live hardware unplug/replug behavior is not fully validated across real
+  devices.
+- Manufacturer/model metadata is incomplete for many ALSA endpoints.
+- The compatibility config-range API still has a representative `channels`
+  field; rich capabilities are preferred for full channel-range metadata.
+- Broader real-device coverage is still needed for direct `hw:`, USB,
+  capture-only/playback-only, suspend/resume, and ALSA control hotplug events.
+
 - The compatibility `SupportedStreamConfigRange` API now preserves optional
   channel ranges and honors requested channel counts inside that range, while
   still exposing `channels` as a representative count for older callers. New

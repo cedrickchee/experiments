@@ -61,6 +61,50 @@ input/output streams. The first implementation target is ALSA on Linux.
   fixed total-buffer requests
 - CoreAudio, WASAPI, JACK, PulseAudio: extension stubs
 
+## Remaining CPAL-grade ALSA gaps
+
+The remaining real gaps are mostly "CPAL-grade robustness" gaps, not missing
+basic ALSA functionality. The Codex `/goal` stays active because the ALSA
+backend is functionally broad now, but not yet "battle-hardened CPAL-grade"
+across hardware, plugins, timing, and disconnect behavior.
+
+The ALSA backend is functional and broad, but these gaps are still real before
+calling it CPAL-grade across hardware and plugin environments:
+
+- Virtual/plugin PCM behavior: capability ranges come directly from
+  `snd_pcm_hw_params`, so PulseAudio/ALSA plugins can report broad ranges and
+  later service them through conversion or backend-specific quirks.
+- Realtime behavior: streams use poll-driven worker threads with best-effort
+  `SCHED_FIFO`, but this is permission- and PCM-type-dependent and not a fully
+  tuned low-latency callback integration.
+- Format edge cases: native interleaved
+  `f32/i8/u8/i16/u16/i24/u24/i32/u32/f64` are implemented. Packed 3-byte
+  24-bit conversion/wrappers, signed/unsigned 64-bit integer PCM, and DSD are
+  not implemented.
+- Duplex conversion: shared input/output negotiation exists, but automatic
+  resampling, channel remixing, and sample-format conversion remain
+  application-level work.
+- Latency/drift correction: diagnostics expose timestamp and latency status,
+  delay, availability, callback cadence, and drift observations, but deeper
+  backend-specific latency correction and active drift compensation are not
+  implemented.
+- Hotplug limits: snapshot diffing, bounded monitoring, and ALSA control-event
+  wakeups exist, but virtual/plugin PCMs may still only be detected by polling
+  and device-specific quirks remain incomplete.
+- Live invalidation validation: fatal I/O and poll errors map to
+  `DeviceNotAvailable` or `StreamInvalidated`, but real hardware unplug/replug
+  validation is still incomplete.
+- Metadata completeness: `DeviceDescription` exposes available ALSA
+  description, driver, type, interface, and address data, but manufacturer/model
+  fields are not reliably exposed or synthesized for every endpoint.
+- Compatibility API shape: `SupportedStreamConfigRange.channels` still exposes
+  a representative channel count for older callers; rich capabilities should be
+  preferred when channel ranges/candidates and direction metadata matter.
+- Hardware matrix: current tests and local smokes do not replace broader real
+  hardware coverage across direct `hw:` devices, USB cards, capture-only and
+  playback-only devices, suspend/resume, unplug while streaming, and real ALSA
+  control hotplug events.
+
 See `IMPLEMENTATION_LOG.md` for design notes and gaps.
 
 ## Build
