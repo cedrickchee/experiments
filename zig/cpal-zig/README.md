@@ -143,3 +143,19 @@ zig build
 ./zig-out/bin/hotplug_snapshot
 ./zig-out/bin/stream_diagnostics
 ```
+
+## Demos
+
+- [Winamp TUI audio playback](./demos/winamp) (that video)
+
+  Run:
+
+  ```sh
+  $ zig build run-winamp
+  ```
+
+  Custom audio stream:
+
+  ```sh
+  $ zig build run-winamp -- --url https://ice1.somafm.com/groovesalad-128-mp3
+  ```
