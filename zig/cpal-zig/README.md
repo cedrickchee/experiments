@@ -1,5 +1,7 @@
 # cpal-zig
 
+https://github.com/user-attachments/assets/b5743daf-bcd2-43a1-b8c4-b6467e9b321b
+
 An idiomatic Zig audio I/O library inspired by [RustAudio CPAL](https://github.com/RustAudio/cpal).
 
 This is not a line-by-line translation. The public API keeps CPAL's core ideas:
