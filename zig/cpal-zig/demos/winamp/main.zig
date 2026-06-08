@@ -2,6 +2,15 @@ const std = @import("std");
 const vaxis = @import("vaxis");
 const cpal = @import("cpal_zig");
 
+const c = @cImport({
+    @cInclude("errno.h");
+    @cInclude("libavformat/avformat.h");
+    @cInclude("libavcodec/avcodec.h");
+    @cInclude("libavutil/avutil.h");
+    @cInclude("libavutil/opt.h");
+    @cInclude("libswresample/swresample.h");
+});
+
 const Cell = vaxis.Cell;
 const Segment = vaxis.Segment;
 const Style = vaxis.Style;
@@ -41,15 +50,366 @@ const StreamPreset = struct {
     format: []const u8,
     bitrate: []const u8,
     kind: []const u8,
+    url: []const u8,
 };
 
 const presets = [_]StreamPreset{
-    .{ .title = "Groove Salad", .source = "SomaFM", .format = "mp3", .bitrate = "128k", .kind = "live" },
-    .{ .title = "DEF CON Radio", .source = "SomaFM", .format = "mp3", .bitrate = "128k", .kind = "live" },
-    .{ .title = "Drone Zone", .source = "SomaFM", .format = "mp3", .bitrate = "128k", .kind = "live" },
-    .{ .title = "Beat Blender", .source = "SomaFM", .format = "aac", .bitrate = "128k", .kind = "live" },
-    .{ .title = "Cliqhop IDM", .source = "SomaFM", .format = "mp3", .bitrate = "128k", .kind = "live" },
+    .{ .title = "Groove Salad", .source = "SomaFM", .format = "mp3", .bitrate = "128k", .kind = "live", .url = "https://ice1.somafm.com/groovesalad-128-mp3" },
+    .{ .title = "DEF CON Radio", .source = "SomaFM", .format = "mp3", .bitrate = "128k", .kind = "live", .url = "https://ice1.somafm.com/defcon-128-mp3" },
+    .{ .title = "Drone Zone", .source = "SomaFM", .format = "mp3", .bitrate = "128k", .kind = "live", .url = "https://ice1.somafm.com/dronezone-128-mp3" },
+    .{ .title = "Beat Blender", .source = "SomaFM", .format = "aac", .bitrate = "128k", .kind = "live", .url = "https://ice1.somafm.com/beatblender-128-aac" },
+    .{ .title = "Cliqhop IDM", .source = "SomaFM", .format = "mp3", .bitrate = "128k", .kind = "live", .url = "https://ice1.somafm.com/cliqhop-128-mp3" },
 };
+
+const DecoderStatus = enum(u8) {
+    idle,
+    connecting,
+    decoding,
+    ended,
+    failed,
+};
+
+const AudioEngine = struct {
+    allocator: std.mem.Allocator,
+    host: cpal.Host,
+    device: cpal.Device,
+    output_stream: cpal.stream.Stream,
+    config: cpal.StreamConfig,
+    ring: []f32,
+    read_index: std.atomic.Value(usize) = .init(0),
+    write_index: std.atomic.Value(usize) = .init(0),
+    generation: std.atomic.Value(u64) = .init(1),
+    output_enabled: std.atomic.Value(bool) = .init(false),
+    paused: std.atomic.Value(bool) = .init(false),
+    status: std.atomic.Value(u8) = .init(@intFromEnum(DecoderStatus.idle)),
+    level_percent: std.atomic.Value(u8) = .init(0),
+    volume_percent: std.atomic.Value(u8) = .init(75),
+    samples_played: std.atomic.Value(u64) = .init(0),
+    decoder_thread: ?std.Thread = null,
+
+    fn init(allocator: std.mem.Allocator) !*AudioEngine {
+        const self = try allocator.create(AudioEngine);
+        errdefer allocator.destroy(self);
+
+        var host = try cpal.defaultHost();
+        errdefer host.deinit(allocator);
+
+        var device = (try host.defaultOutputDevice(allocator)) orelse return error.NoOutputDevice;
+        errdefer device.deinit(allocator);
+
+        const config = (try device.defaultOutputConfig()).config();
+        const ring_samples = @max(@as(usize, config.sample_rate) * @as(usize, config.channels) * 8, 16_384);
+        const ring = try allocator.alloc(f32, ring_samples);
+        errdefer allocator.free(ring);
+        @memset(ring, 0);
+
+        self.* = AudioEngine{
+            .allocator = allocator,
+            .host = host,
+            .device = device,
+            .output_stream = undefined,
+            .config = config,
+            .ring = ring,
+        };
+        self.output_stream = try self.device.buildOutputStreamF32(
+            config,
+            AudioEngine.outputCallback,
+            self,
+            AudioEngine.errorCallback,
+            self,
+        );
+        try self.output_stream.play();
+        return self;
+    }
+
+    fn deinit(self: *AudioEngine) void {
+        self.stopDecoder();
+        self.output_stream.deinit();
+        self.allocator.free(self.ring);
+        self.device.deinit(self.allocator);
+        self.host.deinit(self.allocator);
+        self.allocator.destroy(self);
+    }
+
+    fn start(self: *AudioEngine, url: []const u8) !void {
+        self.stopDecoder();
+        self.clearRing();
+        self.status.store(@intFromEnum(DecoderStatus.connecting), .seq_cst);
+        self.output_enabled.store(true, .seq_cst);
+        self.paused.store(false, .seq_cst);
+        self.samples_played.store(0, .seq_cst);
+        self.level_percent.store(0, .seq_cst);
+        const owned_url = try self.allocator.dupeZ(u8, url);
+        const next_generation = self.generation.fetchAdd(1, .seq_cst) + 1;
+        self.decoder_thread = try std.Thread.spawn(.{}, AudioEngine.decoderMain, .{ self, owned_url, next_generation });
+    }
+
+    fn stopDecoder(self: *AudioEngine) void {
+        _ = self.generation.fetchAdd(1, .seq_cst);
+        self.output_enabled.store(false, .seq_cst);
+        self.paused.store(false, .seq_cst);
+        if (self.decoder_thread) |thread| {
+            thread.join();
+            self.decoder_thread = null;
+        }
+        self.status.store(@intFromEnum(DecoderStatus.idle), .seq_cst);
+        self.clearRing();
+    }
+
+    fn setPaused(self: *AudioEngine, paused_value: bool) void {
+        self.paused.store(paused_value, .seq_cst);
+        self.output_enabled.store(true, .seq_cst);
+    }
+
+    fn setVolume(self: *AudioEngine, percent: u8) void {
+        self.volume_percent.store(percent, .seq_cst);
+    }
+
+    fn decoderStatus(self: *AudioEngine) DecoderStatus {
+        return @enumFromInt(self.status.load(.seq_cst));
+    }
+
+    fn bufferPercent(self: *AudioEngine) u8 {
+        const read = self.read_index.load(.seq_cst);
+        const write = self.write_index.load(.seq_cst);
+        const used = write -| read;
+        return @intCast(@min(@as(usize, 100), (used * 100) / @max(self.ring.len, 1)));
+    }
+
+    fn level(self: *AudioEngine) u8 {
+        return self.level_percent.load(.seq_cst);
+    }
+
+    fn elapsedSeconds(self: *AudioEngine) u32 {
+        const samples = self.samples_played.load(.seq_cst);
+        const denom = @as(u64, self.config.sample_rate) * @as(u64, self.config.channels);
+        return if (denom == 0) 0 else @intCast(samples / denom);
+    }
+
+    fn clearRing(self: *AudioEngine) void {
+        self.read_index.store(0, .seq_cst);
+        self.write_index.store(0, .seq_cst);
+        @memset(self.ring, 0);
+    }
+
+    fn shouldContinue(self: *AudioEngine, generation: u64) bool {
+        return self.generation.load(.seq_cst) == generation;
+    }
+
+    fn writeSamples(self: *AudioEngine, generation: u64, samples: []const f32) void {
+        var offset: usize = 0;
+        while (offset < samples.len and self.shouldContinue(generation)) {
+            const read = self.read_index.load(.seq_cst);
+            const write = self.write_index.load(.seq_cst);
+            const used = write -| read;
+            const space = self.ring.len -| used;
+            if (space == 0) {
+                sleepMs(4);
+                continue;
+            }
+            const count = @min(space, samples.len - offset);
+            const ring_offset = write % self.ring.len;
+            const first = @min(count, self.ring.len - ring_offset);
+            @memcpy(self.ring[ring_offset .. ring_offset + first], samples[offset .. offset + first]);
+            if (first < count) {
+                @memcpy(self.ring[0 .. count - first], samples[offset + first .. offset + count]);
+            }
+            self.write_index.store(write + count, .seq_cst);
+            offset += count;
+        }
+    }
+
+    fn outputCallback(buffer: []f32, info: cpal.OutputCallbackInfo, userdata: ?*anyopaque) void {
+        _ = info;
+        const self: *AudioEngine = @ptrCast(@alignCast(userdata.?));
+        if (!self.output_enabled.load(.seq_cst) or self.paused.load(.seq_cst)) {
+            @memset(buffer, 0);
+            self.level_percent.store(0, .seq_cst);
+            return;
+        }
+
+        const read = self.read_index.load(.seq_cst);
+        const write = self.write_index.load(.seq_cst);
+        const available = write -| read;
+        const count = @min(available, buffer.len);
+        const ring_offset = read % self.ring.len;
+        const first = @min(count, self.ring.len - ring_offset);
+        if (first > 0) @memcpy(buffer[0..first], self.ring[ring_offset .. ring_offset + first]);
+        if (first < count) @memcpy(buffer[first..count], self.ring[0 .. count - first]);
+        if (count < buffer.len) @memset(buffer[count..], 0);
+        self.read_index.store(read + count, .seq_cst);
+
+        const volume = @as(f32, @floatFromInt(self.volume_percent.load(.seq_cst))) / 100.0;
+        var peak: f32 = 0;
+        for (buffer) |*sample| {
+            sample.* = std.math.clamp(sample.* * volume, -1.0, 1.0);
+            peak = @max(peak, @abs(sample.*));
+        }
+        const percent: u8 = @intFromFloat(@min(100.0, peak * 160.0));
+        self.level_percent.store(percent, .seq_cst);
+        _ = self.samples_played.fetchAdd(count, .seq_cst);
+    }
+
+    fn errorCallback(_: cpal.AudioError, userdata: ?*anyopaque) void {
+        const self: *AudioEngine = @ptrCast(@alignCast(userdata.?));
+        self.status.store(@intFromEnum(DecoderStatus.failed), .seq_cst);
+    }
+
+    fn decoderMain(self: *AudioEngine, url: [:0]u8, generation: u64) void {
+        defer self.allocator.free(url);
+        decodeStream(self, url, generation) catch {
+            if (self.shouldContinue(generation)) {
+                self.status.store(@intFromEnum(DecoderStatus.failed), .seq_cst);
+            }
+        };
+    }
+};
+
+const DecoderInterrupt = struct {
+    engine: *AudioEngine,
+    generation: u64,
+};
+
+fn ffmpegInterruptCallback(ctx: ?*anyopaque) callconv(.c) c_int {
+    const interrupt: *DecoderInterrupt = @ptrCast(@alignCast(ctx.?));
+    return if (interrupt.engine.shouldContinue(interrupt.generation)) 0 else 1;
+}
+
+fn decodeStream(engine: *AudioEngine, url: [:0]const u8, generation: u64) !void {
+    _ = c.avformat_network_init();
+
+    var interrupt: DecoderInterrupt = .{ .engine = engine, .generation = generation };
+    var fmt_ctx: ?*c.AVFormatContext = c.avformat_alloc_context();
+    if (fmt_ctx == null) return error.FFmpegOpenFailed;
+    fmt_ctx.?.*.interrupt_callback.callback = ffmpegInterruptCallback;
+    fmt_ctx.?.*.interrupt_callback.@"opaque" = &interrupt;
+    errdefer c.avformat_close_input(&fmt_ctx);
+
+    var options: ?*c.AVDictionary = null;
+    defer c.av_dict_free(&options);
+    _ = c.av_dict_set(&options, "user_agent", "cpal-zig-winamp/0.1", 0);
+    _ = c.av_dict_set(&options, "rw_timeout", "5000000", 0);
+
+    if (c.avformat_open_input(&fmt_ctx, url.ptr, null, &options) < 0) return error.FFmpegOpenFailed;
+    if (c.avformat_find_stream_info(fmt_ctx.?, null) < 0) return error.FFmpegStreamInfoFailed;
+
+    const stream_index = findAudioStream(fmt_ctx.?) orelse return error.NoAudioStream;
+    const stream = fmt_ctx.?.*.streams[@intCast(stream_index)];
+    const codecpar = stream.*.codecpar;
+    const decoder = c.avcodec_find_decoder(codecpar.*.codec_id) orelse return error.DecoderUnavailable;
+    var codec_ctx = c.avcodec_alloc_context3(decoder) orelse return error.DecoderUnavailable;
+    defer c.avcodec_free_context(&codec_ctx);
+    if (c.avcodec_parameters_to_context(codec_ctx, codecpar) < 0) return error.DecoderUnavailable;
+    if (c.avcodec_open2(codec_ctx, decoder, null) < 0) return error.DecoderUnavailable;
+
+    const out_channels: c_int = @intCast(engine.config.channels);
+    const out_rate: c_int = @intCast(engine.config.sample_rate);
+    const out_layout = c.av_get_default_channel_layout(out_channels);
+    const in_channels = if (codec_ctx.*.channels > 0) codec_ctx.*.channels else out_channels;
+    const in_layout = if (codec_ctx.*.channel_layout != 0)
+        @as(i64, @intCast(codec_ctx.*.channel_layout))
+    else
+        c.av_get_default_channel_layout(in_channels);
+
+    var swr: ?*c.SwrContext = c.swr_alloc_set_opts(
+        null,
+        out_layout,
+        c.AV_SAMPLE_FMT_FLT,
+        out_rate,
+        in_layout,
+        codec_ctx.*.sample_fmt,
+        codec_ctx.*.sample_rate,
+        0,
+        null,
+    ) orelse return error.ResamplerUnavailable;
+    defer c.swr_free(&swr);
+    if (c.swr_init(swr.?) < 0) return error.ResamplerUnavailable;
+
+    const packet = c.av_packet_alloc() orelse return error.OutOfMemory;
+    defer c.av_packet_free(@constCast(&packet));
+    const frame = c.av_frame_alloc() orelse return error.OutOfMemory;
+    defer c.av_frame_free(@constCast(&frame));
+
+    engine.status.store(@intFromEnum(DecoderStatus.decoding), .seq_cst);
+    while (engine.shouldContinue(generation)) {
+        const read_rc = c.av_read_frame(fmt_ctx.?, packet);
+        if (read_rc < 0) break;
+        defer c.av_packet_unref(packet);
+        if (packet.*.stream_index != stream_index) continue;
+        if (c.avcodec_send_packet(codec_ctx, packet) < 0) continue;
+        try drainDecoder(engine, generation, codec_ctx, swr.?, frame, out_rate, out_channels);
+    }
+
+    if (engine.shouldContinue(generation)) {
+        _ = c.avcodec_send_packet(codec_ctx, null);
+        try drainDecoder(engine, generation, codec_ctx, swr.?, frame, out_rate, out_channels);
+        engine.status.store(@intFromEnum(DecoderStatus.ended), .seq_cst);
+    }
+}
+
+fn drainDecoder(
+    engine: *AudioEngine,
+    generation: u64,
+    codec_ctx: *c.AVCodecContext,
+    swr: *c.SwrContext,
+    frame: *c.AVFrame,
+    out_rate: c_int,
+    out_channels: c_int,
+) !void {
+    while (engine.shouldContinue(generation)) {
+        const receive_rc = c.avcodec_receive_frame(codec_ctx, frame);
+        if (receive_rc == -c.EAGAIN or receive_rc == c.AVERROR_EOF) return;
+        if (receive_rc < 0) return error.DecodeFailed;
+
+        const delay = c.swr_get_delay(swr, codec_ctx.*.sample_rate);
+        const out_samples = c.av_rescale_rnd(
+            delay + frame.*.nb_samples,
+            out_rate,
+            codec_ctx.*.sample_rate,
+            c.AV_ROUND_UP,
+        );
+        if (out_samples <= 0) {
+            c.av_frame_unref(frame);
+            continue;
+        }
+
+        const total_samples: usize = @intCast(out_samples * out_channels);
+        const converted = try engine.allocator.alloc(f32, total_samples);
+        defer engine.allocator.free(converted);
+
+        var out_data = [_][*c]u8{@ptrCast(converted.ptr)};
+        const converted_per_channel = c.swr_convert(
+            swr,
+            @ptrCast(&out_data),
+            @intCast(out_samples),
+            @ptrCast(frame.*.extended_data),
+            frame.*.nb_samples,
+        );
+        c.av_frame_unref(frame);
+        if (converted_per_channel <= 0) continue;
+
+        const converted_total: usize = @intCast(converted_per_channel * out_channels);
+        engine.writeSamples(generation, converted[0..@min(converted_total, converted.len)]);
+        engine.status.store(@intFromEnum(DecoderStatus.decoding), .seq_cst);
+    }
+}
+
+fn findAudioStream(fmt_ctx: *c.AVFormatContext) ?c_int {
+    var index: c_uint = 0;
+    while (index < fmt_ctx.*.nb_streams) : (index += 1) {
+        const stream = fmt_ctx.*.streams[index];
+        if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_AUDIO) return @intCast(index);
+    }
+    return null;
+}
+
+fn sleepMs(ms: u64) void {
+    var ts = std.os.linux.timespec{
+        .sec = @intCast(ms / 1000),
+        .nsec = @intCast((ms % 1000) * std.time.ns_per_ms),
+    };
+    _ = std.os.linux.nanosleep(&ts, null);
+}
 
 const PlayerSnapshot = struct {
     state: PlaybackState,
@@ -64,6 +424,8 @@ const PlayerSnapshot = struct {
     decoder: []const u8,
     callback_health: []const u8,
     buffer_health: []const u8,
+    buffer_percent: u8,
+    level_percent: u8,
 };
 
 const App = struct {
@@ -75,38 +437,53 @@ const App = struct {
     volume_percent: u8 = 75,
     frame: u32 = 0,
     ascii: bool = false,
+    url_override: ?[]const u8 = null,
     device_name: []const u8 = "ALSA: default",
 
-    fn snapshot(self: App) PlayerSnapshot {
+    fn currentUrl(self: App) []const u8 {
+        return self.url_override orelse presets[self.selected_index].url;
+    }
+
+    fn snapshot(self: App, engine: *AudioEngine) PlayerSnapshot {
+        const decoder_status = engine.decoderStatus();
+        const buffer_percent = engine.bufferPercent();
         return .{
             .state = self.state,
             .selected_index = self.selected_index,
             .playing_index = self.playing_index,
-            .elapsed_seconds = self.elapsed_seconds,
+            .elapsed_seconds = engine.elapsedSeconds(),
             .volume_percent = self.volume_percent,
-            .sample_rate = 44_100,
-            .channels = 2,
+            .sample_rate = engine.config.sample_rate,
+            .channels = @intCast(engine.config.channels),
             .bitrate = presets[self.playing_index].bitrate,
             .device_name = self.device_name,
             .decoder = "ffmpeg",
-            .callback_health = if (self.state == .failed) "retry available" else "output callback healthy",
-            .buffer_health = switch (self.state) {
-                .buffering => "buffering stable",
-                .playing => "stream stable",
-                .paused => "paused",
-                .stopped => "stopped",
+            .callback_health = if (decoder_status == .failed) "retry available" else "output callback healthy",
+            .buffer_health = switch (decoder_status) {
+                .idle => "idle",
+                .connecting => "connecting stream",
+                .decoding => if (buffer_percent < 5) "buffer low" else "buffering stable",
+                .ended => "stream ended",
                 .failed => "stream error",
             },
+            .buffer_percent = buffer_percent,
+            .level_percent = engine.level(),
         };
     }
 
-    fn tick(self: *App) void {
+    fn tick(self: *App, engine: *AudioEngine) void {
         self.frame +%= 1;
-        if (self.state == .playing and self.frame % 30 == 0) self.elapsed_seconds +|= 1;
-        if (self.state == .buffering and self.frame > 36) self.state = .playing;
+        if (self.state == .paused or self.state == .stopped) return;
+        self.state = switch (engine.decoderStatus()) {
+            .idle => .stopped,
+            .connecting => .buffering,
+            .decoding => if (engine.bufferPercent() > 2 or engine.elapsedSeconds() > 0) .playing else .buffering,
+            .ended => .stopped,
+            .failed => .failed,
+        };
     }
 
-    fn handleKey(self: *App, key: vaxis.Key) bool {
+    fn handleKey(self: *App, key: vaxis.Key, engine: *AudioEngine) bool {
         if (key.matches('q', .{}) or key.matches('c', .{ .ctrl = true })) return true;
         if (key.matches(vaxis.Key.down, .{})) {
             self.selected_index = @min(self.selected_index + 1, presets.len - 1);
@@ -115,23 +492,42 @@ const App = struct {
         } else if (key.matches(vaxis.Key.enter, .{})) {
             self.playing_index = self.selected_index;
             self.elapsed_seconds = 0;
+            engine.start(self.currentUrl()) catch {
+                self.state = .failed;
+                return false;
+            };
             self.state = .buffering;
         } else if (key.matches(vaxis.Key.space, .{})) {
             self.state = switch (self.state) {
-                .playing => .paused,
-                .paused, .stopped => .playing,
-                .buffering => .paused,
-                .failed => .buffering,
+                .playing, .buffering => blk: {
+                    engine.setPaused(true);
+                    break :blk .paused;
+                },
+                .paused, .stopped => blk: {
+                    engine.setPaused(false);
+                    break :blk .playing;
+                },
+                .failed => blk: {
+                    engine.start(self.currentUrl()) catch break :blk .failed;
+                    break :blk .buffering;
+                },
             };
         } else if (key.matches('s', .{})) {
+            engine.stopDecoder();
             self.state = .stopped;
         } else if (key.matches('r', .{})) {
-            self.state = .buffering;
+            engine.start(self.currentUrl()) catch {
+                self.state = .failed;
+                return false;
+            };
             self.frame = 0;
+            self.state = .buffering;
         } else if (key.matches('+', .{}) or key.matches('=', .{})) {
             self.volume_percent = @min(self.volume_percent + 5, 100);
+            engine.setVolume(self.volume_percent);
         } else if (key.matches('-', .{})) {
             self.volume_percent = self.volume_percent -| 5;
+            engine.setVolume(self.volume_percent);
         } else if (key.matches('e', .{})) {
             self.state = .failed;
         }
@@ -139,11 +535,20 @@ const App = struct {
     }
 };
 
+const CliOptions = struct {
+    ascii: bool = false,
+    url: ?[]const u8 = null,
+};
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const allocator = init.gpa;
 
-    var app_state: App = .{ .ascii = try shouldUseAscii(init, allocator) };
+    const cli = try parseCli(init, allocator);
+    var app_state: App = .{
+        .ascii = cli.ascii,
+        .url_override = cli.url,
+    };
     var device_name_owned = false;
     if (detectDefaultOutputName(allocator)) |device_name| {
         app_state.device_name = device_name;
@@ -152,6 +557,13 @@ pub fn main(init: std.process.Init) !void {
         app_state.device_name = "ALSA: default";
     }
     defer if (device_name_owned) allocator.free(app_state.device_name);
+
+    const audio_engine = try AudioEngine.init(allocator);
+    defer audio_engine.deinit();
+    audio_engine.setVolume(app_state.volume_percent);
+    audio_engine.start(app_state.currentUrl()) catch {
+        app_state.state = .failed;
+    };
 
     var tty_buffer: [1024]u8 = undefined;
     var tty = try vaxis.Tty.init(io, &tty_buffer);
@@ -170,27 +582,32 @@ pub fn main(init: std.process.Init) !void {
     while (true) {
         while (try loop.tryEvent()) |event| {
             switch (event) {
-                .key_press => |key| if (app_state.handleKey(key)) return,
+                .key_press => |key| if (app_state.handleKey(key, audio_engine)) return,
                 .winsize => |ws| try vx.resize(allocator, tty.writer(), ws),
                 .focus_in => {},
             }
         }
 
-        app_state.tick();
-        try render(&vx, tty.writer(), app_state);
+        app_state.tick(audio_engine);
+        try render(&vx, tty.writer(), app_state, audio_engine);
         try std.Io.sleep(io, .fromMilliseconds(33), .awake);
     }
 }
 
-fn shouldUseAscii(init: std.process.Init, allocator: std.mem.Allocator) !bool {
+fn parseCli(init: std.process.Init, allocator: std.mem.Allocator) !CliOptions {
     var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
     defer args.deinit();
 
+    var options: CliOptions = .{};
     _ = args.next();
     while (args.next()) |arg| {
-        if (std.mem.eql(u8, arg, "--ascii")) return true;
+        if (std.mem.eql(u8, arg, "--ascii")) {
+            options.ascii = true;
+        } else if (std.mem.eql(u8, arg, "--url")) {
+            options.url = args.next() orelse return error.MissingUrlArgument;
+        }
     }
-    return false;
+    return options;
 }
 
 fn detectDefaultOutputName(allocator: std.mem.Allocator) ![]const u8 {
@@ -201,12 +618,12 @@ fn detectDefaultOutputName(allocator: std.mem.Allocator) ![]const u8 {
     return std.fmt.allocPrint(allocator, "{s}: {s}", .{ device.info().host.stableName(), device.info().name });
 }
 
-fn render(vx: *vaxis.Vaxis, tty: *std.Io.Writer, app_state: App) !void {
+fn render(vx: *vaxis.Vaxis, tty: *std.Io.Writer, app_state: App, engine: *AudioEngine) !void {
     const root = vx.window();
     root.hideCursor();
     root.fill(.{ .style = app_state.palette.bg });
 
-    const snapshot = app_state.snapshot();
+    const snapshot = app_state.snapshot(engine);
     if (root.width < 70 or root.height < 20) {
         drawCompact(root, app_state, snapshot);
     } else {
@@ -322,7 +739,7 @@ fn drawTransport(win: Window, app_state: App, snapshot: PlayerSnapshot) void {
         snapshot.elapsed_seconds % 60,
     }) catch "00:00:00";
     _ = win.printSegment(.{ .text = time_text, .style = palette.cyan }, .{ .row_offset = 1, .col_offset = 1, .wrap = .none });
-    drawMeter(win, 12, 1, win.width / 2, levelForFrame(app_state.frame, snapshot.state), palette.green, app_state.ascii);
+    drawMeter(win, 12, 1, win.width / 2, snapshot.level_percent, palette.green, app_state.ascii);
 
     var vol_buf: [8]u8 = undefined;
     const vol_text = std.fmt.bufPrint(&vol_buf, "VOL {d:0>3}", .{snapshot.volume_percent}) catch "VOL";
@@ -349,7 +766,7 @@ fn drawSpectrum(win: Window, app_state: App, snapshot: PlayerSnapshot) void {
     const max_h = win.height -| 1;
     var col: u16 = 1;
     while (col <= bars and col < win.width) : (col += 1) {
-        const value = spectrumValue(app_state.frame, col, snapshot.state);
+        const value = spectrumValue(app_state.frame, col, snapshot.state, snapshot.level_percent);
         const bar_h: u16 = @intCast((@as(u32, value) * @as(u32, @max(max_h, 1))) / 100);
         const style = if (snapshot.state == .paused or snapshot.state == .stopped) palette.muted else if (value > 78) palette.amber else palette.green;
         var row: u16 = 0;
@@ -414,6 +831,9 @@ fn drawStatus(win: Window, app_state: App, snapshot: PlayerSnapshot) void {
         .{ .text = "decoder ", .style = palette.muted },
         .{ .text = snapshot.decoder, .style = palette.cyan },
         .{ .text = separator, .style = palette.muted },
+        .{ .text = "buffer ", .style = palette.muted },
+        .{ .text = bufferText(snapshot.buffer_percent), .style = palette.amber },
+        .{ .text = separator, .style = palette.muted },
         .{ .text = snapshot.callback_health, .style = if (snapshot.state == .failed) palette.red else palette.green },
     }, .{ .row_offset = 0, .col_offset = 1, .wrap = .none });
     if (win.height > 1 and snapshot.state == .failed) {
@@ -477,28 +897,25 @@ fn playlistCountText() []const u8 {
     return "5 items";
 }
 
-fn levelForFrame(frame: u32, state: PlaybackState) u8 {
-    return switch (state) {
-        .playing => 45 + @as(u8, @intCast((frame * 7) % 42)),
-        .buffering => 22 + @as(u8, @intCast((frame * 5) % 24)),
-        .paused => 38,
-        .stopped => 0,
-        .failed => 8,
-    };
-}
-
-fn spectrumValue(frame: u32, col: u16, state: PlaybackState) u8 {
+fn spectrumValue(frame: u32, col: u16, state: PlaybackState, level: u8) u8 {
     if (state == .stopped) return 0;
     if (state == .failed) return if (col % 8 == 0) 18 else 4;
     const moving = if (state == .paused) 42 else frame;
     const a = (moving * 13 + @as(u32, col) * 17) % 100;
     const b = (moving * 5 + @as(u32, col) * @as(u32, col)) % 80;
-    const base: u8 = @intCast((a + b) / 2);
+    const base: u8 = @intCast((a + b + @as(u32, level) * 2) / 4);
     return switch (state) {
-        .buffering => @min(@as(u8, 55), base / 2 + @as(u8, @intCast((moving + col) % 25))),
-        .paused => @max(@as(u8, 8), base / 3),
-        else => @max(@as(u8, 12), base),
+        .buffering => @min(@as(u8, 45), base / 2 + @as(u8, @intCast((moving + col) % 18))),
+        .paused => @max(@as(u8, 4), base / 4),
+        else => @max(@as(u8, 4), base),
     };
+}
+
+fn bufferText(percent: u8) []const u8 {
+    if (percent >= 75) return "full";
+    if (percent >= 30) return "good";
+    if (percent >= 5) return "low";
+    return "empty";
 }
 
 fn lowerBlock(value: u8) []const u8 {
